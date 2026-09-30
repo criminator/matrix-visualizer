@@ -17,6 +17,16 @@ node --experimental-strip-types --test lib/matrix.test.ts
 npm run build
 ```
 
+## Deploy to Vercel
+
+Push this repository to GitHub and import it into Vercel with the repository root as the Root Directory. The checked-in `vercel.json` selects the Other framework preset, installs dependencies with `npm ci`, and runs `npm run build:vercel`.
+
+Vinext uses Nitro's Vercel adapter to generate `.vercel/output`, including the server function, static assets, and routing configuration. This replaces the previous Cloudflare Workers build. No application environment variables are required.
+
+For an existing Vercel project, push these changes and redeploy the new commit. The repository configuration overrides the framework, build command, and output directory settings. If the project previously used a subdirectory as its Root Directory, change it to the repository root.
+
+You can verify the deployment build locally with `npm run build:vercel`. For a local production server, run `npm run build` followed by `npm start`; the normal build creates `.output/server/index.mjs`.
+
 ## Multiple matrices
 
 Use **Add matrix** to create another 3×3 matrix. Select a row to edit it; each matrix retains its own input, color, visibility, and validation state. Rename a matrix with a unique identifier, and use its visibility button or remove button to manage overlays. The last matrix cannot be removed.

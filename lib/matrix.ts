@@ -131,6 +131,21 @@ export function columnSpace(m: Matrix): Vector[] {
   return basis;
 }
 export const rank = (m: Matrix): number => columnSpace(m).length;
+// Equal spans: same dimension, and every basis vector of b lies in span(a).
+// columnSpace returns an orthonormal basis, so a projection residual suffices.
+export function sameSpan(a: Matrix, b: Matrix): boolean {
+  const basisA = columnSpace(a),
+    basisB = columnSpace(b);
+  if (basisA.length !== basisB.length) return false;
+  return basisB.every((vector) => {
+    const residual: Vector = [...vector];
+    for (const axis of basisA) {
+      const projection = residual.reduce((sum, v, i) => sum + v * axis[i], 0);
+      for (let i = 0; i < 3; i++) residual[i] -= projection * axis[i];
+    }
+    return Math.hypot(...residual) < 1e-8;
+  });
+}
 
 export function multiply(a: Matrix, b: Matrix): Matrix {
   return a.map((row) =>

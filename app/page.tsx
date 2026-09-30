@@ -1,946 +1,372 @@
 'use client';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   Box,
-  RotateCcw,
-  Play,
-  Pause,
-  ArrowUpRight,
-  SlidersHorizontal,
-  Braces,
-  Grid2X2,
-  Move3D,
-  Check,
-  Info,
-  Layers3,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
   ChevronDown,
+  ChevronUp,
   Maximize2,
   Minimize2,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
-  IDENTITY,
-  parseMatrix,
-  scalar,
-  determinant,
-  rank,
-  formatMatrix,
-  type Matrix,
-  compose,
-} from '../lib/matrix';
-import Link from 'next/link';
-import Scene, { type DisplayMode, type SceneHandle } from './scene';
-import { registerMatrixTool } from '../lib/webmcp';
-const presets = [
-  {
-    name: 'Shear',
-    hint: 'Tilt space',
-    matrix: [
-      [1, 0.7, 0],
-      [0, 1, 0],
-      [0, 0, 1],
-    ],
-  },
-  {
-    name: 'Rotation',
-    hint: '45° around z',
-    matrix: [
-      [Math.SQRT1_2, -Math.SQRT1_2, 0],
-      [Math.SQRT1_2, Math.SQRT1_2, 0],
-      [0, 0, 1],
-    ],
-  },
-  {
-    name: 'Scale',
-    hint: 'Stretch the axes',
-    matrix: [
-      [1.7, 0, 0],
-      [0, 0.7, 0],
-      [0, 0, 1.3],
-    ],
-  },
-  {
-    name: 'Projection',
-    hint: 'Flatten onto xy',
-    matrix: [
-      [1, 0, 0],
-      [0, 1, 0],
-      [0, 0, 0],
-    ],
-  },
-];
-const initial = presets[0].matrix;
-const palette = [
-  '#bafb73',
-  '#83b6fc',
-  '#fa9a80',
-  '#d6a4ff',
-  '#ffc75e',
-  '#70e0d5',
-];
-type Entry = {
-  id: string;
-  name: string;
-  color: string;
-  visible: boolean;
-  matrix: Matrix;
-  cells: string[][];
-  source: string;
-  error: string;
-  preset: string;
-};
-const entry = (
-  id: string,
-  name: string,
-  m: Matrix,
-  color: string,
-  preset = 'Custom',
-): Entry => ({
-  id,
-  name,
-  color,
-  visible: true,
-  matrix: m.map((r) => [...r]),
-  cells: m.map((r) => r.map(String)),
-  source: formatMatrix(m),
-  error: '',
-  preset,
-});
+  Drawer,
+  DrawerContent,
+  DrawerTitle,
+} from '@/components/ui/drawer';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { EditorPanel } from '@/components/matrix/editor-panel';
+import { IconButton } from '@/components/matrix/icon-button';
+import { ShortcutsPopover } from '@/components/matrix/shortcuts-popover';
+import { StatsDock } from '@/components/matrix/stats-dock';
+import {
+  CameraToolbar,
+  ModeToggle,
+  VIEWS,
+} from '@/components/matrix/view-toolbar';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { useMatrixWorkspace, type Plot } from '@/hooks/use-matrix-workspace';
+import { usePersistedState } from '@/hooks/use-persisted-state';
+import { determinant, rank, sameSpan } from '@/lib/matrix';
+import { registerMatrixTool } from '@/lib/webmcp';
+import { cn } from '@/lib/utils';
+import Scene, {
+  type CameraView,
+  type DisplayMode,
+  type SceneHandle,
+} from './scene';
+
+// Mobile bottom-sheet snap points: peek (stats), half (grid), full.
+const SNAPS = ['150px', '430px', 1] as const;
+type Snap = (typeof SNAPS)[number];
+const snapPx = (snap: Snap) =>
+  typeof snap === 'number' ? snap * window.innerHeight : parseFloat(snap);
+
+const SPAN_NAMES = ['Origin only', 'Line', 'Plane', 'All of ℝ³'];
+
 export default function Home() {
-  const [entries, setEntries] = useState<Entry[]>([
-    entry('matrix-1', 'A', initial, palette[0], 'Shear'),
-  ]);
-  const [activeId, setActiveId] = useState('matrix-1');
-  const serial = useRef(2);
-  const active = entries.find((e) => e.id === activeId) ?? entries[0];
-  const { matrix, cells, source, error, preset: selected } = active;
-  const [editor, setEditor] = useState('grid');
-  const [mode, setMode] = useState<DisplayMode>('transform'),
-    [progress, setProgress] = useState(1),
-    [playing, setPlaying] = useState(false);
-  const [grid, setGrid] = useState(true),
-    [original, setOriginal] = useState(true),
-    [vectors, setVectors] = useState(true),
-    [highlight, setHighlight] = useState<number | null>(null);
-  const [expression, setExpression] = useState('A * B'),
-    [showComposition, setShowComposition] = useState(false),
-    [nameError, setNameError] = useState('');
-  const [panels, setPanels] = useState({
-    editor: true,
-    camera: true,
-    bottom: true,
-    toolbar: true,
-    header: true,
-  });
-  const allCollapsed = Object.values(panels).every((visible) => !visible);
-  const togglePanel = (panel: keyof typeof panels) =>
-    setPanels((current) => ({ ...current, [panel]: !current[panel] }));
-  const patch = (changes: Partial<Entry>) =>
-    setEntries((list) =>
-      list.map((e) => (e.id === active.id ? { ...e, ...changes } : e)),
-    );
-  const setCells = (cells: string[][]) => patch({ cells });
-  const setSource = (source: string) => patch({ source });
-  const setMatrix = (matrix: Matrix) => patch({ matrix });
-  const setError = (error: string) => patch({ error });
-  const setSelected = (preset: string) => patch({ preset });
+  const ws = useMatrixWorkspace();
+  const { active } = ws;
+  const isMobile = useIsMobile();
   const scene = useRef<SceneHandle>(null);
-  const det = determinant(matrix);
-  const dimension = rank(matrix);
-  const apply = (m: Matrix, name = 'Custom') => {
-    patch({
-      matrix: m,
-      cells: m.map((r) => r.map(String)),
-      source: formatMatrix(m),
-      error: '',
-      preset: name,
-    });
-    setProgress(1);
-    setPlaying(false);
-  };
-  const applyRef = useRef(apply);
-  useLayoutEffect(() => {
-    applyRef.current = apply;
-  });
-  const progressRef = useRef(progress);
-  useLayoutEffect(() => {
-    progressRef.current = progress;
-  }, [progress]);
-  useEffect(() => registerMatrixTool((m) => applyRef.current(m)), []);
-  const addMatrix = () => {
-    const n = serial.current++;
-    let name =
-      String.fromCharCode(65 + ((n - 1) % 26)) +
-      (n > 26 ? Math.floor((n - 1) / 26) : '');
-    while (entries.some((e) => e.name === name)) name += '1';
-    const id = `matrix-${n}`;
-    setEntries((list) => [
-      ...list,
-      entry(id, name, IDENTITY, palette[(n - 1) % palette.length], 'Identity'),
-    ]);
-    setActiveId(id);
-    setNameError('');
-  };
-  const removeMatrix = (id: string) => {
-    if (entries.length === 1) return;
-    setEntries((list) => list.filter((e) => e.id !== id));
-    if (active.id === id) setActiveId(entries.find((e) => e.id !== id)!.id);
-    setNameError('');
-  };
-  let composition: Matrix | null = null;
-  let compositionError = '';
-  if (showComposition) {
-    try {
-      composition = compose(
-        expression,
-        Object.fromEntries(entries.map((e) => [e.name, e.matrix])),
-      );
-    } catch (e) {
-      compositionError = (e as Error).message;
-    }
-  }
-  const plots = [
-    ...entries.map((e) => ({
-      id: e.id,
-      name: e.name,
-      color: e.color,
-      matrix: e.matrix,
-      visible: e.visible,
-    })),
-    ...(composition
-      ? [
-          {
-            id: 'composition',
-            name: expression.replace(/\s/g, ''),
-            color: '#ffffff',
-            matrix: composition,
-            visible: true,
-          },
-        ]
-      : []),
+
+  const [mode, setMode] = useState<DisplayMode>('transform');
+  const [view, setView] = useState<CameraView | null>('3d');
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const [grid, setGrid] = usePersistedState('matrix-space:grid', true);
+  const [original, setOriginal] = usePersistedState('matrix-space:original', true);
+  const [vectors, setVectors] = usePersistedState('matrix-space:vectors', true);
+  const [sidebarOpen, setSidebarOpen] = usePersistedState('matrix-space:sidebar', true);
+  const [focus, setFocus] = usePersistedState('matrix-space:focus', false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [dockHeight, setDockHeight] = useState(0);
+  const [snap, setSnap] = useState<Snap>(SNAPS[0]);
+  const [sheetHeight, setSheetHeight] = useState(150);
+
+  const det = determinant(active.matrix);
+  const dimension = rank(active.matrix);
+  const visiblePlots = ws.plots.filter((p) => p.visible);
+  const layers = [
+    { label: 'Reference grid', checked: grid, onChange: setGrid },
+    { label: 'Original cube', checked: original, onChange: setOriginal },
+    { label: 'Basis vectors', checked: vectors, onChange: setVectors },
   ];
-  useEffect(() => {
-    if (!playing) return;
-    let id: number;
-    let last: number | null = null;
-    let elapsed = progressRef.current;
-    const tick = (time: number) => {
-      const delta = last === null ? 0 : Math.min(time - last, 50) / 2600;
-      last = time;
-      elapsed = Math.min(1, elapsed + delta);
-      setProgress(elapsed);
-      if (elapsed === 1) {
-        setPlaying(false);
+
+  const bottomInset = focus ? 0 : isMobile ? sheetHeight : dockHeight + 16;
+
+  // Measure the stats dock so the scene can frame around it.
+  const dockRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(() => setDockHeight(node.offsetHeight));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const changeMode = (next: DisplayMode) => {
+    setMode(next);
+    if (next === 'span') ws.setPlaying(false);
+  };
+  const showView = (next: CameraView) => {
+    setView(next);
+    scene.current?.view(next);
+  };
+  const fit = () => scene.current?.view('fit');
+  const toggleFocus = () => setFocus((f) => !f);
+  const moveSheet = (next: Snap) => {
+    setSnap(next);
+    setSheetHeight(snapPx(next));
+  };
+
+  // Global shortcuts; kept in a ref so the listener is registered once.
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  useLayoutEffect(() => {
+    onKey.current = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('input, textarea, select, [contenteditable="true"]'))
         return;
-      }
-      id = requestAnimationFrame(tick);
+      const view = VIEWS.find((v) => v.key === e.key);
+      if (view) showView(view.value);
+      else if (e.key === '0') fit();
+      else if (e.key === ' ') {
+        // Let focused buttons and sliders handle Space themselves.
+        if (target.closest('button, [role="slider"], a') || mode === 'span')
+          return;
+        ws.togglePlay();
+      } else if (e.key === 'f' || e.key === 'F') toggleFocus();
+      else if (e.key === 'Escape' && focus) setFocus(false);
+      else if ((e.key === 's' || e.key === 'S') && !isMobile)
+        setSidebarOpen((open) => !open);
+      else if (e.key === '?') setShortcutsOpen(true);
+      else return;
+      e.preventDefault();
     };
-    id = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(id);
-  }, [playing]);
-  const editCell = (r: number, c: number, value: string) => {
-    const next = cells.map((row) => [...row]);
-    next[r][c] = value;
-    setCells(next);
-    setSelected('Custom');
-    try {
-      const m = next.map((row) => row.map(scalar));
-      setMatrix(m);
-      setSource(formatMatrix(m));
-      setError('');
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-  const editText = (value: string) => {
-    setSource(value);
-    setSelected('Custom');
-    try {
-      const m = parseMatrix(value);
-      setMatrix(m);
-      setCells(m.map((r) => r.map(String)));
-      setError('');
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
+  });
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => onKey.current(e);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+
+  const applyRef = useRef(ws.apply);
+  useLayoutEffect(() => {
+    applyRef.current = ws.apply;
+  });
+  useEffect(() => registerMatrixTool((m) => applyRef.current(m)), []);
+
+  const editor = (
+    <EditorPanel
+      ws={ws}
+      highlight={highlight}
+      onHighlight={setHighlight}
+      layers={layers}
+      editorFirst={isMobile}
+    />
+  );
+  const showSidebar = !isMobile && !focus && sidebarOpen;
+
   return (
-    <main
-      className={`workspace ${allCollapsed ? 'focus-mode' : ''} ${!panels.header ? 'header-collapsed' : ''}`}
-    >
-      <header id="header-panel" className="topbar" hidden={!panels.header}>
-        <Link className="brand" href="/" aria-label="Matrix Space home">
-          <span className="brand-icon">
-            <Box size={23} />
+    <div className="flex h-dvh flex-col overflow-hidden">
+      {!focus && (
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-card px-3 sm:px-4">
+          {!isMobile && (
+            <IconButton
+              label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+              shortcut="S"
+              side="bottom"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              aria-expanded={sidebarOpen}
+              aria-controls="editor-sidebar"
+            >
+              {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+            </IconButton>
+          )}
+          <span className="flex items-center gap-2.5 text-lg font-bold tracking-tight">
+            <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Box className="size-5" />
+            </span>
+            <span>
+              matrix<span className="font-normal text-muted-foreground">space</span>
+            </span>
           </span>
-          matrix<span className="brand-light">space</span>
-          <span className="beta">LAB</span>
-        </Link>
-        <div className="top-caption">A little algebra. A new perspective.</div>
-        <span className="live">
-          <i /> Interactive 3D
-        </span>
-        <button
-          className="panel-toggle"
-          aria-label="Collapse header"
-          title="Collapse header"
-          aria-controls="header-panel"
-          aria-expanded={panels.header}
-          onClick={() => togglePanel('header')}
-        >
-          <ChevronUp size={17} />
-        </button>
-      </header>
-      <div className={`app-body ${!panels.editor ? 'editor-collapsed' : ''}`}>
-        <aside id="editor-panel" className="sidebar" hidden={!panels.editor}>
-          <div className="panel-heading">
-            <span>Matrix editor</span>
-            <button
-              className="panel-toggle"
-              aria-label="Collapse matrix editor"
-              title="Collapse matrix editor"
-              aria-controls="editor-panel"
-              aria-expanded={panels.editor}
-              onClick={() => togglePanel('editor')}
-            >
-              <ChevronLeft size={17} />
-            </button>
-          </div>
-          <div className="intro">
-            <span className="eyebrow">LINEAR ALGEBRA PLAYGROUND</span>
-            <h1>
-              Give numbers
-              <br />a new dimension<span>.</span>
-            </h1>
-            <p>Edit a matrix. See how it shapes space.</p>
-          </div>
-          <section className="matrix-list-section">
-            <div className="section-heading">
-              <h2>
-                Matrices <span className="dimension">{entries.length}</span>
-              </h2>
-              <button className="add-matrix" onClick={addMatrix}>
-                + Add matrix
-              </button>
-            </div>
-            <div className="matrix-list">
-              {entries.map((e) => (
-                <div
-                  className={`matrix-item ${active.id === e.id ? 'active' : ''}`}
-                  key={e.id}
-                >
-                  <button
-                    className="matrix-select"
-                    aria-pressed={active.id === e.id}
-                    onClick={() => {
-                      setActiveId(e.id);
-                      setHighlight(null);
-                      setNameError('');
-                    }}
-                  >
-                    <i style={{ background: e.color }} />
-                    <strong>{e.name}</strong>
-                    <small>{e.error ? 'Invalid draft' : e.preset}</small>
-                  </button>
-                  <button
-                    className="matrix-visibility"
-                    aria-label={`${e.visible ? 'Hide' : 'Show'} matrix ${e.name}`}
-                    aria-pressed={e.visible}
-                    onClick={() =>
-                      setEntries((list) =>
-                        list.map((item) =>
-                          item.id === e.id
-                            ? { ...item, visible: !item.visible }
-                            : item,
-                        ),
-                      )
-                    }
-                  >
-                    {e.visible ? 'Visible' : 'Hidden'}
-                  </button>
-                  <button
-                    className="matrix-remove"
-                    disabled={entries.length === 1}
-                    aria-label={`Remove matrix ${e.name}`}
-                    onClick={() => removeMatrix(e.id)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="matrix-properties">
-              <label>
-                Name
-                <input
-                  key={active.id + active.name}
-                  aria-label="Matrix name"
-                  defaultValue={active.name}
-                  maxLength={12}
-                  onBlur={(e) => {
-                    const name = e.target.value.trim();
-                    if (
-                      !/^[A-Za-z][A-Za-z0-9_]{0,11}$/.test(name) ||
-                      entries.some(
-                        (item) => item.id !== active.id && item.name === name,
-                      )
-                    ) {
-                      setNameError(
-                        'Use a unique name: letters, numbers or underscores.',
-                      );
-                      e.target.value = active.name;
-                      return;
-                    }
-                    const old = active.name;
-                    patch({ name });
-                    setExpression((value) =>
-                      value.replace(/\b[A-Za-z][A-Za-z0-9_]*\b/g, (token) =>
-                        token === old ? name : token,
-                      ),
-                    );
-                    setNameError('');
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') e.currentTarget.blur();
-                  }}
-                />
-              </label>
-              <label>
-                Color
-                <input
-                  aria-label={`Color for ${active.name}`}
-                  type="color"
-                  value={active.color}
-                  onChange={(e) => patch({ color: e.target.value })}
-                />
-              </label>
-            </div>
-            {nameError && (
-              <p className="input-status error" role="alert">
-                {nameError}
-              </p>
+          <div className="ml-auto flex items-center gap-1">
+            {!isMobile && (
+              <ShortcutsPopover open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
             )}
-          </section>
-          <section>
-            <div className="section-heading">
-              <h2>
-                <span className="matrix-symbol">{active.name}</span>{' '}
-                Transformation matrix
-              </h2>
-              <span className="dimension">3 × 3</span>
-            </div>
-            <div className="editor-tabs">
-              <button
-                className={editor === 'grid' ? 'active' : ''}
-                onClick={() => setEditor('grid')}
-              >
-                <Grid2X2 size={15} /> Grid
-              </button>
-              <button
-                className={editor === 'text' ? 'active' : ''}
-                onClick={() => setEditor('text')}
-              >
-                <Braces size={15} /> Text input
-              </button>
-            </div>
-            {editor === 'grid' ? (
-              <div className="matrix-editor">
-                <span className="matrix-equals">{active.name} =</span>
-                <div className="matrix-brackets">
-                  <div className="column-labels">
-                    <span>x</span>
-                    <span>y</span>
-                    <span>z</span>
-                  </div>
-                  <div className="matrix-cells">
-                    {cells.flatMap((row, r) =>
-                      row.map((value, c) => (
-                        <input
-                          key={`${r}-${c}`}
-                          aria-label={`Row ${r + 1}, column ${c + 1}`}
-                          className={highlight === c ? 'highlighted' : ''}
-                          value={value}
-                          onFocus={() => setHighlight(c)}
-                          onBlur={() => setHighlight(null)}
-                          onChange={(e) => editCell(r, c, e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              e.currentTarget
-                                .closest('.matrix-cells')
-                                ?.querySelectorAll('input')
-                                [(r * 3 + c + 1) % 9]?.focus();
-                            }
-                          }}
-                          onPaste={(e) => {
-                            const text = e.clipboardData.getData('text');
-                            if (/[\t\n;[\]]/.test(text)) {
-                              e.preventDefault();
-                              try {
-                                apply(parseMatrix(text));
-                              } catch (err) {
-                                setError((err as Error).message);
-                              }
-                            }
-                          }}
-                        />
-                      )),
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <textarea
-                className="text-editor"
-                aria-label="Matrix text input"
-                spellCheck={false}
-                value={source}
-                onChange={(e) => editText(e.target.value)}
-              />
-            )}
-            <output className={`input-status ${error ? 'error' : ''}`}>
-              {error ? (
-                <>
-                  <Info size={14} />
-                  {error} Last valid matrix shown.
-                </>
-              ) : (
-                <>
-                  <Check size={14} />
-                  {editor === 'grid'
-                    ? 'Live updates · fractions & sqrt(2) supported'
-                    : 'Rows: semicolons or newlines · paste arrays or cells'}
-                </>
-              )}
-            </output>
-            <button
-              className="reset-matrix"
-              onClick={() => apply(IDENTITY, 'Identity')}
-            >
-              <RotateCcw size={14} /> Reset to identity
-            </button>
-          </section>
-          <section>
-            <div className="section-heading">
-              <h2>Try a transformation</h2>
-              <ArrowUpRight size={16} />
-            </div>
-            <div className="presets">
-              {presets.map((p, i) => (
-                <button
-                  key={p.name}
-                  className={selected === p.name ? 'preset active' : 'preset'}
-                  onClick={() => apply(p.matrix, p.name)}
-                >
-                  <span className="preset-glyph">
-                    {['▱', '↻', '⤢', '⊥'][i]}
-                  </span>
-                  <strong>{p.name}</strong>
-                  <small>{p.hint}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-          <section className="composition-section">
-            <label className="toggle-row">
-              <span>Plot a composition</span>
-              <input
-                type="checkbox"
-                checked={showComposition}
-                onChange={(e) => setShowComposition(e.target.checked)}
-              />
-              <span className="switch" />
-            </label>
-            {showComposition && (
-              <>
-                <input
-                  className="composition-input"
-                  aria-label="Composition expression"
-                  value={expression}
-                  onChange={(e) => setExpression(e.target.value)}
-                  placeholder="A * B"
-                />
-                <output
-                  className={`composition-help ${compositionError ? 'error' : ''}`}
-                >
-                  {compositionError ||
-                    'Rightmost matrix acts first. Hidden matrices can still be used.'}
-                </output>
-                {composition && (
-                  <div className="composition-result">
-                    <span>
-                      Result · det ={' '}
-                      {Number(determinant(composition).toPrecision(5))}
-                    </span>
-                    <pre>
-                      {composition
-                        .map((row) =>
-                          row
-                            .map((value) => Number(value.toPrecision(5)))
-                            .join('  '),
-                        )
-                        .join('\n')}
-                    </pre>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-          <section>
-            <div className="section-heading">
-              <h2>
-                <SlidersHorizontal size={15} /> Scene layers
-              </h2>
-            </div>
-            {(
-              [
-                ['Reference grid', grid, setGrid],
-                ['Original shape', original, setOriginal],
-                ['Basis vectors', vectors, setVectors],
-              ] as const
-            ).map(([label, value, setter]) => (
-              <label className="toggle-row" key={label}>
-                <span>{label}</span>
-                <input
-                  type="checkbox"
-                  checked={value}
-                  onChange={(e) => setter(e.target.checked)}
-                />
-                <span className="switch" />
-              </label>
-            ))}
-          </section>
-          <div className="sidebar-foot">
-            <span className="keycap">↵</span> next cell{' '}
-            <span className="keycap">Tab</span> move through matrix
+            <IconButton label="Focus mode" shortcut="F" side="bottom" onClick={toggleFocus}>
+              <Maximize2 />
+            </IconButton>
           </div>
-        </aside>
+        </header>
+      )}
+
+      <div
+        className={cn(
+          'grid min-h-0 flex-1',
+          showSidebar ? 'grid-cols-[340px_minmax(0,1fr)]' : 'grid-cols-1',
+        )}
+      >
+        {showSidebar && (
+          <aside
+            id="editor-sidebar"
+            aria-label="Matrix editor"
+            className="min-h-0 border-r bg-sidebar"
+          >
+            <ScrollArea className="h-full">{editor}</ScrollArea>
+          </aside>
+        )}
+
         <section
-          className={`viewport ${mode === 'span' ? 'span-mode' : ''} ${!panels.editor ? 'editor-hidden' : ''} ${!panels.bottom ? 'bottom-hidden' : ''} ${!panels.toolbar ? 'toolbar-hidden' : ''}`}
-          aria-label="Interactive three dimensional matrix plot"
+          aria-label="Interactive 3D plot"
+          className="relative min-h-0 overflow-hidden bg-(image:--scene)"
         >
           <Scene
             ref={scene}
-            plots={plots}
+            plots={ws.plots}
             activeId={active.id}
-            progress={progress}
+            progress={ws.progress}
             grid={grid}
             original={original}
             vectors={vectors}
             mode={mode}
             highlight={highlight}
-            bottomPanelVisible={panels.bottom}
+            bottomInset={bottomInset}
+            onViewChange={setView}
           />
-          <div className="layout-controls">
-            {!panels.header && !allCollapsed && (
-              <button
-                className="panel-toggle"
-                aria-label="Show header"
-                title="Show header"
-                aria-controls="header-panel"
-                aria-expanded={panels.header}
-                onClick={() => togglePanel('header')}
-              >
-                <ChevronDown size={17} />
-              </button>
-            )}
-            <button
-              className={`panel-toggle focus-toggle ${allCollapsed ? 'restore-panels' : ''}`}
-              aria-label={allCollapsed ? 'Show all panels' : 'Hide all panels'}
-              title={allCollapsed ? 'Show all panels' : 'Hide all panels'}
-              onClick={() =>
-                setPanels({
-                  editor: allCollapsed,
-                  camera: allCollapsed,
-                  bottom: allCollapsed,
-                  toolbar: allCollapsed,
-                  header: allCollapsed,
-                })
-              }
-            >
-              {allCollapsed ? (
-                <>
-                  <Minimize2 size={16} /> Show panels
-                </>
-              ) : (
-                <Maximize2 size={17} />
+          <p aria-live="polite" className="sr-only">
+            {`${active.name}: determinant ${Number(det.toFixed(3))}, rank ${dimension}, ${
+              mode === 'span' ? `spans ${SPAN_NAMES[dimension]}` : `${visiblePlots.length} visible`
+            }.`}
+          </p>
+
+          {focus ? (
+            <FocusOverlay plots={visiblePlots} onExit={() => setFocus(false)} />
+          ) : (
+            <div className="pointer-events-none absolute inset-0 flex flex-col gap-4 p-3 sm:p-4">
+              <div className="flex items-start justify-between gap-3">
+                <ModeToggle mode={mode} onModeChange={changeMode} />
+                {!isMobile && <CameraToolbar view={view} onView={showView} onFit={fit} />}
+              </div>
+              {(!isMobile || snap === SNAPS[0]) && (
+                <SceneTitle mode={mode} ws={ws} dimension={dimension} visible={visiblePlots} />
               )}
-            </button>
-          </div>
-          {!panels.editor && !allCollapsed && (
-            <button
-              className="panel-toggle restore-editor"
-              aria-label="Show matrix editor"
-              title="Show matrix editor"
-              aria-controls="editor-panel"
-              aria-expanded={panels.editor}
-              onClick={() => togglePanel('editor')}
-            >
-              <ChevronRight size={17} />
-            </button>
-          )}
-          {!panels.toolbar && !allCollapsed && (
-            <button
-              className="panel-toggle restore-toolbar"
-              aria-label="Show display toolbar"
-              title="Show display toolbar"
-              aria-controls="toolbar-panel"
-              aria-expanded={panels.toolbar}
-              onClick={() => togglePanel('toolbar')}
-            >
-              <ChevronDown size={17} />
-            </button>
-          )}
-          <div
-            id="toolbar-panel"
-            className="scene-top"
-            hidden={!panels.toolbar}
-          >
-            <div className="view-tabs">
-              <button
-                className={mode === 'transform' ? 'active' : ''}
-                onClick={() => setMode('transform')}
-                aria-pressed={mode === 'transform'}
-              >
-                <Box size={16} /> Transformation
-              </button>
-              <button
-                className={mode === 'vectors' ? 'active' : ''}
-                onClick={() => setMode('vectors')}
-                aria-pressed={mode === 'vectors'}
-              >
-                <Move3D size={16} /> Vectors
-              </button>
-              <button
-                className={mode === 'span' ? 'active' : ''}
-                aria-pressed={mode === 'span'}
-                onClick={() => {
-                  setMode('span');
-                  setPlaying(false);
-                }}
-              >
-                <Layers3 size={16} /> Span
-              </button>
-            </div>
-            <div className="toolbar-actions">
-              <button
-                className="icon-button"
-                title="Reset camera"
-                aria-label="Reset camera"
-                onClick={() => scene.current?.view('perspective')}
-              >
-                <RotateCcw size={17} />
-              </button>
-              <button
-                className="panel-toggle"
-                aria-label="Collapse display toolbar"
-                title="Collapse display toolbar"
-                aria-controls="toolbar-panel"
-                aria-expanded={panels.toolbar}
-                onClick={() => togglePanel('toolbar')}
-              >
-                <ChevronUp size={17} />
-              </button>
-            </div>
-          </div>
-          <div className="scene-title" hidden={!panels.toolbar}>
-            <span className="eyebrow">
-              {mode === 'transform'
-                ? 'SPACE TRANSFORMED'
-                : mode === 'span'
-                  ? 'COLUMN SPACE'
-                  : 'COLUMN VECTORS'}
-            </span>
-            <h2>
-              {mode === 'span'
-                ? `Span(${active.name}) · ${['Origin only', 'Line', 'Plane', 'All of ℝ³'][dimension]}`
-                : `${plots.filter((p) => p.visible).length} visible matrices`}
-              {!(mode === 'span' && dimension === 3) && <span> / ℝ³</span>}
-            </h2>
-            {mode === 'span' && (
-              <p className="span-caption">
-                Dimension {dimension} · Columns of the input matrix
-                {!active.visible ? ' · selected matrix hidden' : ''}
-              </p>
-            )}
-          </div>
-          {!panels.camera && !allCollapsed && (
-            <button
-              className="panel-toggle restore-camera"
-              aria-label="Show camera controls"
-              title="Show camera controls"
-              aria-controls="camera-panel"
-              aria-expanded={panels.camera}
-              onClick={() => togglePanel('camera')}
-            >
-              <ChevronLeft size={17} />
-            </button>
-          )}
-          <div
-            id="camera-panel"
-            className="camera-controls"
-            hidden={!panels.camera}
-          >
-            <div className="camera-heading">
-              <span>VIEW</span>
-              <button
-                className="panel-toggle"
-                aria-label="Collapse camera controls"
-                title="Collapse camera controls"
-                aria-controls="camera-panel"
-                aria-expanded={panels.camera}
-                onClick={() => togglePanel('camera')}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-            {['3D', 'XY', 'XZ', 'YZ'].map((v, i) => (
-              <button
-                key={v}
-                onClick={() =>
-                  scene.current?.view(['perspective', 'xy', 'xz', 'yz'][i])
-                }
-              >
-                {v}
-              </button>
-            ))}
-            <button onClick={() => scene.current?.view('fit')}>Fit</button>
-          </div>
-          <div className="legend" hidden={!panels.bottom}>
-            {entries.map((e) => (
-              <button
-                key={e.id}
-                aria-pressed={active.id === e.id}
-                onClick={() => setActiveId(e.id)}
-                style={{ opacity: e.visible ? 1 : 0.4 }}
-              >
-                <i style={{ background: e.color }} />
-                {e.name}
-                {active.id === e.id ? ' · editing' : ''}
-              </button>
-            ))}
-            {composition && (
-              <span>
-                <i style={{ background: '#fff' }} />
-                Composition
-              </span>
-            )}
-            <span hidden={mode !== 'transform' || !original}>
-              <i className="original-dot" />
-              original
-            </span>
-          </div>
-          {!panels.bottom && !allCollapsed && (
-            <button
-              className="panel-toggle restore-bottom"
-              aria-label="Show statistics and animation"
-              title="Show statistics and animation"
-              aria-controls="bottom-panel"
-              aria-expanded={panels.bottom}
-              onClick={() => togglePanel('bottom')}
-            >
-              <ChevronUp size={17} /> Statistics
-            </button>
-          )}
-          <div
-            id="bottom-panel"
-            className="bottom-panel"
-            hidden={!panels.bottom}
-          >
-            <button
-              className="panel-toggle collapse-bottom"
-              aria-label="Collapse statistics and animation"
-              title="Collapse statistics and animation"
-              aria-controls="bottom-panel"
-              aria-expanded={panels.bottom}
-              onClick={() => togglePanel('bottom')}
-            >
-              <ChevronDown size={17} />
-            </button>
-            <div className="stats-caption">
-              Selected matrix: {active.name}
-              {!active.visible ? ' · hidden' : ''}
-            </div>
-            <div className="stats">
-              <div>
-                <span>DETERMINANT</span>
-                <strong>
-                  {Number(det.toFixed(4))}
-                  <small>det({active.name})</small>
-                </strong>
-              </div>
-              <div>
-                <span>RANK</span>
-                <strong>
-                  {dimension}
-                  <small>/ 3 dimensions</small>
-                </strong>
-              </div>
-              <div>
-                <span>VOLUME SCALE</span>
-                <strong>
-                  {Number(Math.abs(det).toFixed(3))}×
-                  <small>
-                    {Math.abs(det) < 1e-10
-                      ? 'Collapsed space'
-                      : det < 0
-                        ? 'Orientation reversed'
-                        : 'Orientation preserved'}
-                  </small>
-                </strong>
-              </div>
-            </div>
-            <div className="timeline" hidden={mode === 'span'}>
-              <button
-                className="play-button"
-                aria-label={
-                  playing ? 'Pause transformation' : 'Play transformation'
-                }
-                onClick={() => {
-                  if (progress >= 1) setProgress(0);
-                  setPlaying((p) => !p);
-                }}
-              >
-                {playing ? <Pause size={18} /> : <Play size={18} />}
-              </button>
-              <div className="timeline-track">
-                <div>
-                  <strong>Animate all matrices</strong>
-                  <span>{Math.round(progress * 100)}%</span>
+              {isMobile && (
+                <div className="absolute top-16 right-3">
+                  <CameraToolbar view={view} onView={showView} onFit={fit} vertical />
                 </div>
-                <input
-                  aria-label="Transformation progress"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.001"
-                  value={progress}
-                  onChange={(e) => {
-                    setPlaying(false);
-                    setProgress(Number(e.target.value));
-                  }}
+              )}
+              {!isMobile && (
+                <StatsDock
+                  ref={dockRef}
+                  ws={ws}
+                  det={det}
+                  rank={dimension}
+                  mode={mode}
+                  className="mx-auto mt-auto w-full max-w-4xl"
                 />
-                <div className="timeline-labels">
-                  <span>Identity</span>
-                  <span>All target matrices</span>
-                </div>
-              </div>
+              )}
             </div>
-            <div className="interpolation-note">
-              {mode === 'span'
-                ? dimension === 0
-                  ? 'The zero matrix spans only the origin.'
-                  : 'Span extends infinitely; the plot shows a finite window.'
-                : 'Linear interpolation · A(t) = (1 − t)I + tA'}
-            </div>
-          </div>
-          <div className="scene-help" hidden={!panels.bottom}>
-            Drag to orbit <b>·</b> Scroll to zoom <b>·</b> Right-drag to pan
-          </div>
+          )}
         </section>
       </div>
-    </main>
+
+      {isMobile && !focus && (
+        <Drawer
+          open
+          modal={false}
+          disablePointerDismissal
+          showSwipeHandle
+          snapPoints={[...SNAPS]}
+          snapToSequentialPoints
+          snapPoint={snap}
+          onSnapPointChange={(next) => moveSheet((next ?? SNAPS[0]) as Snap)}
+          // The sheet can't be dismissed; swiping down returns to the peek.
+          onOpenChange={(open) => !open && moveSheet(SNAPS[0])}
+        >
+          <DrawerContent>
+            <DrawerTitle className="sr-only">Matrix editor</DrawerTitle>
+            <IconButton
+              label={snap === 1 ? 'Collapse editor' : 'Expand editor'}
+              onClick={() =>
+                moveSheet(SNAPS[(SNAPS.indexOf(snap) + 1) % SNAPS.length])
+              }
+              className="absolute top-2 right-3 z-10 text-muted-foreground"
+            >
+              {snap === 1 ? <ChevronDown /> : <ChevronUp />}
+            </IconButton>
+            <div
+              className="overflow-y-auto overscroll-contain"
+              style={{ maxHeight: Math.max(sheetHeight - 12, 0) }}
+            >
+              <StatsDock
+                ws={ws}
+                det={det}
+                rank={dimension}
+                mode={mode}
+                className="rounded-none border-0 bg-transparent px-5 pt-1 pb-0 shadow-none backdrop-blur-none"
+              />
+              {editor}
+            </div>
+          </DrawerContent>
+        </Drawer>
+      )}
+    </div>
+  );
+}
+
+function SceneTitle({
+  mode,
+  ws,
+  dimension,
+  visible,
+}: {
+  mode: DisplayMode;
+  ws: ReturnType<typeof useMatrixWorkspace>;
+  dimension: number;
+  visible: Plot[];
+}) {
+  const { active } = ws;
+  if (mode !== 'span') {
+    const count = visible.length;
+    return (
+      <div className="pointer-events-none">
+        <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+          {mode === 'transform' ? 'Space transformed' : 'Column vectors'}
+        </p>
+        <h2 className="mt-1 text-xl font-normal">
+          {count} visible {count === 1 ? 'matrix' : 'matrices'}
+        </h2>
+      </div>
+    );
+  }
+  // Group the active matrix with any visible matrices spanning the same space.
+  const shared = visible.filter(
+    (p) => p.id !== active.id && sameSpan(p.matrix, active.matrix),
+  );
+  return (
+    <div className="pointer-events-none max-w-[70%]">
+      <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+        Column space
+      </p>
+      <h2 className="mt-1 text-xl font-normal">
+        {[active, ...shared].map((p) => `Span(${p.name})`).join(' = ')}
+        <span className="text-muted-foreground"> · {SPAN_NAMES[dimension]}</span>
+      </h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Dimension {dimension}
+        {!active.visible && ` · ${active.name} is hidden`}
+        {visible.length > 1 && ' · other spans shown as outlines'}
+      </p>
+    </div>
+  );
+}
+
+function FocusOverlay({ plots, onExit }: { plots: Plot[]; onExit: () => void }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onExit}
+        className="pointer-events-auto self-end bg-card/80 backdrop-blur"
+      >
+        <Minimize2 /> Exit focus
+      </Button>
+      <ul aria-label="Plotted matrices" className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+        {plots.map((p) => (
+          <li key={p.id} className="flex items-center gap-1.5">
+            <span aria-hidden className="size-2 rounded-full" style={{ background: p.color }} />
+            {p.id === 'composition' ? `${p.name} (composition)` : p.name}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

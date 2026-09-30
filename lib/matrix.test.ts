@@ -9,6 +9,7 @@ import {
   formatMatrix,
   compose,
   columnSpace,
+  sameSpan,
 } from './matrix.ts';
 void test('safe arithmetic supports fractions, roots, signs, scientific notation and precedence', () => {
   assert.equal(scalar('1/2'), 0.5);
@@ -206,4 +207,36 @@ void test('composition validates missing names, syntax and excessive magnitude',
       ],
     }),
   );
+});
+void test('sameSpan compares column spaces regardless of basis choice', () => {
+  const planeXY = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 0],
+  ];
+  const shearedXY = [
+    [2, 1, 0],
+    [0, 3, 0],
+    [0, 0, 0],
+  ];
+  const planeXZ = [
+    [1, 0, 0],
+    [0, 0, 0],
+    [0, 1, 0],
+  ];
+  const lineX = [
+    [1, 2, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  const zero = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  assert.ok(sameSpan(planeXY, shearedXY));
+  assert.ok(!sameSpan(planeXY, planeXZ));
+  assert.ok(!sameSpan(planeXY, lineX));
+  assert.ok(sameSpan(IDENTITY, [...shearedXY.slice(0, 2), [0, 0, 5]]));
+  assert.ok(sameSpan(zero, zero));
 });

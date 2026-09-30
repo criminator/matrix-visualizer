@@ -11,7 +11,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { columnSpace, type Matrix } from '../lib/matrix';
 export type DisplayMode = 'transform' | 'vectors' | 'span';
-export type SceneHandle = { view: (name: string) => void };
+export type CameraView = '3d' | 'xy' | 'xz' | 'yz';
+// 'fit' reframes everything while keeping the current viewing direction.
+export type SceneHandle = { view: (name: CameraView | 'fit') => void };
 export type Plot = {
   id: string;
   name: string;
@@ -28,7 +30,11 @@ export type SceneProps = {
   vectors: boolean;
   mode: DisplayMode;
   highlight: number | null;
-  bottomPanelVisible: boolean;
+  // Pixels of the canvas covered by overlays at the bottom; the view is
+  // shifted up so shapes are centered in the uncovered area.
+  bottomInset: number;
+  // Called with null when the user orbits away from a named view.
+  onViewChange?: (view: CameraView | null) => void;
 };
 const colors = [0xfa9a80, 0xbafb73, 0x83b6fc];
 export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
@@ -36,7 +42,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     latest = useRef(props),
     api = useRef<{
       update: () => void;
-      view: (name: string) => void;
+      view: (name: CameraView | 'fit') => void;
       resize: () => void;
     } | null>(null);
   const [error, setError] = useState('');
@@ -66,7 +72,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
   ]);
   useEffect(() => {
     api.current?.resize();
-  }, [props.bottomPanelVisible]);
+  }, [props.bottomInset]);
   useEffect(() => {
     api.current?.view('fit');
   }, [props.mode]);
@@ -107,6 +113,14 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       });
     };
     controls.addEventListener('change', render);
+    // Until the user orbits, layout changes (panels, sheet, window) re-apply
+    // the last programmatic view so shapes stay framed.
+    let autoView: CameraView | 'fit' | null = '3d';
+    const userMoved = () => {
+      autoView = null;
+      latest.current.onViewChange?.(null);
+    };
+    controls.addEventListener('start', userMoved);
     const resources: { dispose: () => void }[] = [];
     const keep = <T extends { dispose: () => void }>(resource: T) => {
       resources.push(resource);
@@ -131,25 +145,33 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     }
     const grid = line(gridPoints, 0x647c82, 0.18);
     scene.add(grid);
+    const labelFont = getComputedStyle(document.body).fontFamily;
+    // Screen-space labels: fixed on-screen size at any zoom level.
     function label(text: string, color: string, owned = resources) {
       const canvas = document.createElement('canvas');
-      canvas.width = 128;
-      canvas.height = 64;
+      canvas.width = 256;
+      canvas.height = 128;
       const ctx = canvas.getContext('2d')!;
-      ctx.font = '32px Arial';
+      ctx.font = `600 64px ${labelFont}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = '#101719';
+      ctx.strokeText(text, 128, 64);
       ctx.fillStyle = color;
-      ctx.fillText(text, 64, 32);
+      ctx.fillText(text, 128, 64);
       const texture = new THREE.CanvasTexture(canvas);
+      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
       const material = new THREE.SpriteMaterial({
         map: texture,
         transparent: true,
         depthTest: false,
+        sizeAttenuation: false,
       });
       owned.push(texture, material);
       const sprite = new THREE.Sprite(material);
-      sprite.scale.set(0.38, 0.19, 1);
+      sprite.scale.set(0.056, 0.028, 1);
+      sprite.renderOrder = 10;
       return sprite;
     }
     const axes = new THREE.Group();
@@ -308,6 +330,9 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         spanDimension: 0,
         fill,
         stroke,
+        spanFill,
+        spaceFill,
+        spanGridMaterial,
         arrows,
         labels,
         key: plot.name + plot.color,
@@ -398,11 +423,22 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
             });
           }
         }
-        object.stroke.opacity = plot.id === p.activeId ? 1 : 0.65;
+        const isActive = plot.id === p.activeId;
+        object.stroke.opacity = isActive ? 1 : 0.65;
+        // Overlapping spans blend into grey, so only the active one is filled;
+        // the rest are drawn as faint outlines.
+        object.spanFill.opacity = isActive ? 0.1 : 0;
+        object.spaceFill.opacity = isActive ? 0.025 : 0;
+        object.spanGridMaterial.opacity = isActive ? 0.35 : 0.12;
         object.arrows.forEach((a, i) => {
           const v = new THREE.Vector3(m[0][i], m[1][i], m[2][i]),
             length = v.length();
-          a.visible = (p.vectors || p.mode === 'vectors') && length > 1e-10;
+          // In span mode only the active matrix's columns are drawn; the
+          // rest would pile up near the origin at span scale.
+          a.visible =
+            (p.vectors || p.mode === 'vectors') &&
+            (p.mode !== 'span' || isActive) &&
+            length > 1e-10;
           if (length > 1e-10) {
             a.setDirection(v.clone().normalize());
             a.setLength(
@@ -429,72 +465,75 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     const resize = () => {
       const width = el.clientWidth,
         height = el.clientHeight;
+      if (!width || !height) return;
       renderer.setSize(width, height);
       camera.aspect = width / height;
       camera.setViewOffset(
         width,
         height,
         0,
-        latest.current.bottomPanelVisible ? height * 0.12 : 0,
+        Math.min(latest.current.bottomInset, height * 0.6) / 2,
         width,
         height,
       );
       camera.updateProjectionMatrix();
-      render();
+      if (autoView) view(autoView);
+      else render();
     };
-    const view = (name: string) => {
+    const directions: Record<CameraView, THREE.Vector3> = {
+      '3d': new THREE.Vector3(1.6, -2.5, 1.65).normalize(),
+      xy: new THREE.Vector3(0, 0, 1),
+      xz: new THREE.Vector3(0, -1, 0),
+      yz: new THREE.Vector3(1, 0, 0),
+    };
+    // Every view frames the visible shapes; named views also set direction.
+    const view = (name: CameraView | 'fit') => {
       const p = latest.current;
-      let center =
-          p.mode === 'span'
-            ? new THREE.Vector3()
-            : new THREE.Vector3(0.5, 0.5, 0.5),
-        distance = 6.8;
+      autoView = name;
+      const bounds = new THREE.Box3();
+      bounds.expandByPoint(new THREE.Vector3());
+      for (const plot of p.plots) {
+        if (!plot.visible) continue;
+        const object = objects.get(plot.id);
+        if (!object) continue;
+        if (p.mode === 'span') {
+          object.root.updateMatrixWorld(true);
+          bounds.union(
+            new THREE.Box3().setFromObject(
+              object.spanShapes[object.spanDimension],
+            ),
+          );
+          continue;
+        }
+        for (let x = 0; x <= 1; x++)
+          for (let y = 0; y <= 1; y++)
+            for (let z = 0; z <= 1; z++)
+              bounds.expandByPoint(
+                new THREE.Vector3(x, y, z).applyMatrix4(
+                  object.transformed.matrix,
+                ),
+              );
+      }
+      if (p.original && p.mode === 'transform')
+        bounds.expandByPoint(new THREE.Vector3(1, 1, 1));
+      const center = bounds.getCenter(new THREE.Vector3());
+      // Frame within the part of the canvas not covered by overlays.
+      const height = el.clientHeight || 1;
+      const visible = 1 - Math.min(p.bottomInset, height * 0.6) / height;
+      // Fit whichever of height (minus overlays) or width is tighter.
+      const extent =
+        Math.max(1, bounds.getSize(new THREE.Vector3()).length()) /
+        (2 * Math.tan(THREE.MathUtils.degToRad(18)));
+      const distance =
+        extent * Math.max(1 / visible, 1 / Math.min(1, camera.aspect)) * 1.8;
+      let direction: THREE.Vector3;
       if (name === 'fit') {
-        const bounds = new THREE.Box3();
-        bounds.expandByPoint(new THREE.Vector3());
-        for (const plot of p.plots) {
-          if (!plot.visible) continue;
-          const object = objects.get(plot.id);
-          if (!object) continue;
-          if (p.mode === 'span') {
-            object.root.updateMatrixWorld(true);
-            bounds.union(
-              new THREE.Box3().setFromObject(
-                object.spanShapes[object.spanDimension],
-              ),
-            );
-            continue;
-          }
-          for (let x = 0; x <= 1; x++)
-            for (let y = 0; y <= 1; y++)
-              for (let z = 0; z <= 1; z++)
-                bounds.expandByPoint(
-                  new THREE.Vector3(x, y, z).applyMatrix4(
-                    object.transformed.matrix,
-                  ),
-                );
-        }
-        if (p.original && p.mode === 'transform') {
-          bounds.expandByPoint(new THREE.Vector3(1, 1, 1));
-        }
-        center = bounds.getCenter(new THREE.Vector3());
-        distance =
-          (Math.max(1, bounds.getSize(new THREE.Vector3()).length()) /
-            Math.sin(THREE.MathUtils.degToRad(18)) /
-            Math.min(1, camera.aspect)) *
-          1.1;
+        direction = camera.position.clone().sub(controls.target).normalize();
+      } else {
+        direction = directions[name];
+        camera.up.set(0, name === 'xy' ? 1 : 0, name === 'xy' ? 0 : 1);
       }
       controls.target.copy(center);
-      camera.up.set(0, 0, 1);
-      const direction =
-        name === 'xy'
-          ? new THREE.Vector3(0, 0, 1)
-          : name === 'xz'
-            ? new THREE.Vector3(0, -1, 0)
-            : name === 'yz'
-              ? new THREE.Vector3(1, 0, 0)
-              : new THREE.Vector3(1.6, -2.5, 1.65).normalize();
-      if (name === 'xy') camera.up.set(0, 1, 0);
       camera.position.copy(center).addScaledVector(direction, distance);
       controls.update();
       render();
@@ -510,12 +549,13 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     renderer.domElement.addEventListener('webglcontextlost', lost);
     api.current = { update, view, resize };
     resize();
-    view('perspective');
     update();
+    view('3d');
     return () => {
       api.current = null;
       observer.disconnect();
       controls.removeEventListener('change', render);
+      controls.removeEventListener('start', userMoved);
       controls.dispose();
       cancelAnimationFrame(frame);
       resources.forEach((r) => r.dispose());
@@ -526,9 +566,15 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     };
   }, []);
   return (
-    <div ref={host} className="canvas-host">
+    <div
+      ref={host}
+      className="absolute inset-0 [&>canvas]:block [&>canvas]:size-full [&>canvas]:touch-none"
+    >
       {error && (
-        <div className="scene-error" role="alert">
+        <div
+          role="alert"
+          className="absolute inset-x-[15%] top-[40%] rounded-lg border bg-card p-5 text-center text-sm"
+        >
           {error}
         </div>
       )}

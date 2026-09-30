@@ -1,4 +1,5 @@
 export type Matrix = number[][];
+export type Vector = [number, number, number];
 export const IDENTITY: Matrix = [
   [1, 0, 0],
   [0, 1, 0],
@@ -99,24 +100,37 @@ export const determinant = (m: Matrix) =>
   m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
   m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
   m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-export function rank(m: Matrix): number {
-  const a = m.map((r) => [...r]);
-  const tolerance = Math.max(...a.flat().map(Math.abs)) * 1e-10;
-  let rank = 0;
-  for (let col = 0; col < 3; col++) {
-    let pivot = rank;
-    for (let row = rank + 1; row < 3; row++)
-      if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
-    if (Math.abs(a[pivot][col]) <= tolerance) continue;
-    [a[rank], a[pivot]] = [a[pivot], a[rank]];
-    for (let row = rank + 1; row < 3; row++) {
-      const f = a[row][col] / a[rank][col];
-      for (let c = col; c < 3; c++) a[row][c] -= f * a[rank][c];
-    }
-    rank++;
+// Pivoted, twice-reorthogonalized Gram-Schmidt keeps nearly dependent columns
+// stable and gives both the span renderer and rank statistic the same tolerance.
+export function columnSpace(m: Matrix): Vector[] {
+  const columns: Vector[] = [0, 1, 2].map((c) => [m[0][c], m[1][c], m[2][c]]);
+  const tolerance = Math.max(...m.flat().map(Math.abs)) * 1e-10;
+  const basis: Vector[] = [];
+  while (columns.length) {
+    const residuals = columns.map((column) => {
+      const residual: Vector = [...column];
+      for (let pass = 0; pass < 2; pass++)
+        for (const vector of basis) {
+          const projection = residual.reduce(
+            (sum, value, i) => sum + value * vector[i],
+            0,
+          );
+          for (let i = 0; i < 3; i++) residual[i] -= projection * vector[i];
+        }
+      return residual;
+    });
+    let pivot = 0;
+    for (let i = 1; i < residuals.length; i++)
+      if (Math.hypot(...residuals[i]) > Math.hypot(...residuals[pivot]))
+        pivot = i;
+    const length = Math.hypot(...residuals[pivot]);
+    if (length <= tolerance) break;
+    basis.push(residuals[pivot].map((value) => value / length) as Vector);
+    columns.splice(pivot, 1);
   }
-  return rank;
+  return basis;
 }
+export const rank = (m: Matrix): number => columnSpace(m).length;
 
 export function multiply(a: Matrix, b: Matrix): Matrix {
   return a.map((row) =>

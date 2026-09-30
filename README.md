@@ -9,6 +9,8 @@ npm install
 npm run dev
 ```
 
+Local development uses Vinext's dev server. Nitro is enabled for production builds and previews, where it packages the app for Node.js or Vercel.
+
 ## Validate
 
 ```sh
@@ -32,6 +34,12 @@ You can verify the deployment build locally with `npm run build:vercel`. For a l
 Use **Add matrix** to create another 3×3 matrix. Select a row to edit it; each matrix retains its own input, color, visibility, and validation state. Rename a matrix with a unique identifier, and use its visibility button or remove button to manage overlays. The last matrix cannot be removed.
 
 Enable **Plot a composition** to evaluate products such as `A * B` (B acts first). The white result updates when operands change. Renaming updates expression references; deleting an operand shows an error and removes the result until the expression is corrected. Hidden matrices remain valid operands. The scrubber animates all plotted matrices together, and Fit frames all visible transformations.
+
+## Display modes and panels
+
+Choose **Transformation**, **Vectors**, or **Span** in the display toolbar. Span shows the column space of each visible input matrix (and the composition, when enabled): the origin for rank 0, a line for rank 1, a plane for rank 2, and all of ℝ³ for rank 3. Colors match the matrix overlays. The displayed line, plane, and space are finite windows into unbounded subspaces. Span uses the input matrix directly; animation is available in the other modes.
+
+Use the chevron on the matrix editor, camera controls, statistics/animation panel, display toolbar, or header to collapse that panel. Edge buttons reopen individual panels. **Hide all panels** expands the grid to fill the screen and hides all overlays; **Show panels** restores the controls. Collapsing panels preserves the matrices, display mode, and scene settings.
 
 ## Input and conventions
 

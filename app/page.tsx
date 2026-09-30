@@ -12,6 +12,13 @@ import {
   Move3D,
   Check,
   Info,
+  Layers3,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   IDENTITY,
@@ -24,7 +31,7 @@ import {
   compose,
 } from '../lib/matrix';
 import Link from 'next/link';
-import Scene, { type SceneHandle } from './scene';
+import Scene, { type DisplayMode, type SceneHandle } from './scene';
 import { registerMatrixTool } from '../lib/webmcp';
 const presets = [
   {
@@ -110,7 +117,7 @@ export default function Home() {
   const active = entries.find((e) => e.id === activeId) ?? entries[0];
   const { matrix, cells, source, error, preset: selected } = active;
   const [editor, setEditor] = useState('grid');
-  const [mode, setMode] = useState<'transform' | 'vectors'>('transform'),
+  const [mode, setMode] = useState<DisplayMode>('transform'),
     [progress, setProgress] = useState(1),
     [playing, setPlaying] = useState(false);
   const [grid, setGrid] = useState(true),
@@ -120,6 +127,16 @@ export default function Home() {
   const [expression, setExpression] = useState('A * B'),
     [showComposition, setShowComposition] = useState(false),
     [nameError, setNameError] = useState('');
+  const [panels, setPanels] = useState({
+    editor: true,
+    camera: true,
+    bottom: true,
+    toolbar: true,
+    header: true,
+  });
+  const allCollapsed = Object.values(panels).every((visible) => !visible);
+  const togglePanel = (panel: keyof typeof panels) =>
+    setPanels((current) => ({ ...current, [panel]: !current[panel] }));
   const patch = (changes: Partial<Entry>) =>
     setEntries((list) =>
       list.map((e) => (e.id === active.id ? { ...e, ...changes } : e)),
@@ -131,6 +148,7 @@ export default function Home() {
   const setSelected = (preset: string) => patch({ preset });
   const scene = useRef<SceneHandle>(null);
   const det = determinant(matrix);
+  const dimension = rank(matrix);
   const apply = (m: Matrix, name = 'Custom') => {
     patch({
       matrix: m,
@@ -249,8 +267,10 @@ export default function Home() {
     }
   };
   return (
-    <main className="workspace">
-      <header className="topbar">
+    <main
+      className={`workspace ${allCollapsed ? 'focus-mode' : ''} ${!panels.header ? 'header-collapsed' : ''}`}
+    >
+      <header id="header-panel" className="topbar" hidden={!panels.header}>
         <Link className="brand" href="/" aria-label="Matrix Space home">
           <span className="brand-icon">
             <Box size={23} />
@@ -262,9 +282,32 @@ export default function Home() {
         <span className="live">
           <i /> Interactive 3D
         </span>
+        <button
+          className="panel-toggle"
+          aria-label="Collapse header"
+          title="Collapse header"
+          aria-controls="header-panel"
+          aria-expanded={panels.header}
+          onClick={() => togglePanel('header')}
+        >
+          <ChevronUp size={17} />
+        </button>
       </header>
-      <div className="app-body">
-        <aside className="sidebar">
+      <div className={`app-body ${!panels.editor ? 'editor-collapsed' : ''}`}>
+        <aside id="editor-panel" className="sidebar" hidden={!panels.editor}>
+          <div className="panel-heading">
+            <span>Matrix editor</span>
+            <button
+              className="panel-toggle"
+              aria-label="Collapse matrix editor"
+              title="Collapse matrix editor"
+              aria-controls="editor-panel"
+              aria-expanded={panels.editor}
+              onClick={() => togglePanel('editor')}
+            >
+              <ChevronLeft size={17} />
+            </button>
+          </div>
           <div className="intro">
             <span className="eyebrow">LINEAR ALGEBRA PLAYGROUND</span>
             <h1>
@@ -575,7 +618,7 @@ export default function Home() {
           </div>
         </aside>
         <section
-          className="viewport"
+          className={`viewport ${mode === 'span' ? 'span-mode' : ''} ${!panels.editor ? 'editor-hidden' : ''} ${!panels.bottom ? 'bottom-hidden' : ''} ${!panels.toolbar ? 'toolbar-hidden' : ''}`}
           aria-label="Interactive three dimensional matrix plot"
         >
           <Scene
@@ -588,42 +631,171 @@ export default function Home() {
             vectors={vectors}
             mode={mode}
             highlight={highlight}
+            bottomPanelVisible={panels.bottom}
           />
-          <div className="scene-top">
+          <div className="layout-controls">
+            {!panels.header && !allCollapsed && (
+              <button
+                className="panel-toggle"
+                aria-label="Show header"
+                title="Show header"
+                aria-controls="header-panel"
+                aria-expanded={panels.header}
+                onClick={() => togglePanel('header')}
+              >
+                <ChevronDown size={17} />
+              </button>
+            )}
+            <button
+              className={`panel-toggle focus-toggle ${allCollapsed ? 'restore-panels' : ''}`}
+              aria-label={allCollapsed ? 'Show all panels' : 'Hide all panels'}
+              title={allCollapsed ? 'Show all panels' : 'Hide all panels'}
+              onClick={() =>
+                setPanels({
+                  editor: allCollapsed,
+                  camera: allCollapsed,
+                  bottom: allCollapsed,
+                  toolbar: allCollapsed,
+                  header: allCollapsed,
+                })
+              }
+            >
+              {allCollapsed ? (
+                <>
+                  <Minimize2 size={16} /> Show panels
+                </>
+              ) : (
+                <Maximize2 size={17} />
+              )}
+            </button>
+          </div>
+          {!panels.editor && !allCollapsed && (
+            <button
+              className="panel-toggle restore-editor"
+              aria-label="Show matrix editor"
+              title="Show matrix editor"
+              aria-controls="editor-panel"
+              aria-expanded={panels.editor}
+              onClick={() => togglePanel('editor')}
+            >
+              <ChevronRight size={17} />
+            </button>
+          )}
+          {!panels.toolbar && !allCollapsed && (
+            <button
+              className="panel-toggle restore-toolbar"
+              aria-label="Show display toolbar"
+              title="Show display toolbar"
+              aria-controls="toolbar-panel"
+              aria-expanded={panels.toolbar}
+              onClick={() => togglePanel('toolbar')}
+            >
+              <ChevronDown size={17} />
+            </button>
+          )}
+          <div
+            id="toolbar-panel"
+            className="scene-top"
+            hidden={!panels.toolbar}
+          >
             <div className="view-tabs">
               <button
                 className={mode === 'transform' ? 'active' : ''}
                 onClick={() => setMode('transform')}
+                aria-pressed={mode === 'transform'}
               >
                 <Box size={16} /> Transformation
               </button>
               <button
                 className={mode === 'vectors' ? 'active' : ''}
                 onClick={() => setMode('vectors')}
+                aria-pressed={mode === 'vectors'}
               >
                 <Move3D size={16} /> Vectors
               </button>
+              <button
+                className={mode === 'span' ? 'active' : ''}
+                aria-pressed={mode === 'span'}
+                onClick={() => {
+                  setMode('span');
+                  setPlaying(false);
+                }}
+              >
+                <Layers3 size={16} /> Span
+              </button>
             </div>
-            <button
-              className="icon-button"
-              title="Reset camera"
-              aria-label="Reset camera"
-              onClick={() => scene.current?.view('perspective')}
-            >
-              <RotateCcw size={17} />
-            </button>
+            <div className="toolbar-actions">
+              <button
+                className="icon-button"
+                title="Reset camera"
+                aria-label="Reset camera"
+                onClick={() => scene.current?.view('perspective')}
+              >
+                <RotateCcw size={17} />
+              </button>
+              <button
+                className="panel-toggle"
+                aria-label="Collapse display toolbar"
+                title="Collapse display toolbar"
+                aria-controls="toolbar-panel"
+                aria-expanded={panels.toolbar}
+                onClick={() => togglePanel('toolbar')}
+              >
+                <ChevronUp size={17} />
+              </button>
+            </div>
           </div>
-          <div className="scene-title">
+          <div className="scene-title" hidden={!panels.toolbar}>
             <span className="eyebrow">
-              {mode === 'transform' ? 'SPACE TRANSFORMED' : 'COLUMN VECTORS'}
+              {mode === 'transform'
+                ? 'SPACE TRANSFORMED'
+                : mode === 'span'
+                  ? 'COLUMN SPACE'
+                  : 'COLUMN VECTORS'}
             </span>
             <h2>
-              {plots.filter((p) => p.visible).length} visible matrices
-              <span> / ℝ³</span>
+              {mode === 'span'
+                ? `Span(${active.name}) · ${['Origin only', 'Line', 'Plane', 'All of ℝ³'][dimension]}`
+                : `${plots.filter((p) => p.visible).length} visible matrices`}
+              {!(mode === 'span' && dimension === 3) && <span> / ℝ³</span>}
             </h2>
+            {mode === 'span' && (
+              <p className="span-caption">
+                Dimension {dimension} · Columns of the input matrix
+                {!active.visible ? ' · selected matrix hidden' : ''}
+              </p>
+            )}
           </div>
-          <div className="camera-controls">
-            <span>VIEW</span>
+          {!panels.camera && !allCollapsed && (
+            <button
+              className="panel-toggle restore-camera"
+              aria-label="Show camera controls"
+              title="Show camera controls"
+              aria-controls="camera-panel"
+              aria-expanded={panels.camera}
+              onClick={() => togglePanel('camera')}
+            >
+              <ChevronLeft size={17} />
+            </button>
+          )}
+          <div
+            id="camera-panel"
+            className="camera-controls"
+            hidden={!panels.camera}
+          >
+            <div className="camera-heading">
+              <span>VIEW</span>
+              <button
+                className="panel-toggle"
+                aria-label="Collapse camera controls"
+                title="Collapse camera controls"
+                aria-controls="camera-panel"
+                aria-expanded={panels.camera}
+                onClick={() => togglePanel('camera')}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
             {['3D', 'XY', 'XZ', 'YZ'].map((v, i) => (
               <button
                 key={v}
@@ -636,7 +808,7 @@ export default function Home() {
             ))}
             <button onClick={() => scene.current?.view('fit')}>Fit</button>
           </div>
-          <div className="legend">
+          <div className="legend" hidden={!panels.bottom}>
             {entries.map((e) => (
               <button
                 key={e.id}
@@ -655,12 +827,38 @@ export default function Home() {
                 Composition
               </span>
             )}
-            <span>
+            <span hidden={mode !== 'transform' || !original}>
               <i className="original-dot" />
               original
             </span>
           </div>
-          <div className="bottom-panel">
+          {!panels.bottom && !allCollapsed && (
+            <button
+              className="panel-toggle restore-bottom"
+              aria-label="Show statistics and animation"
+              title="Show statistics and animation"
+              aria-controls="bottom-panel"
+              aria-expanded={panels.bottom}
+              onClick={() => togglePanel('bottom')}
+            >
+              <ChevronUp size={17} /> Statistics
+            </button>
+          )}
+          <div
+            id="bottom-panel"
+            className="bottom-panel"
+            hidden={!panels.bottom}
+          >
+            <button
+              className="panel-toggle collapse-bottom"
+              aria-label="Collapse statistics and animation"
+              title="Collapse statistics and animation"
+              aria-controls="bottom-panel"
+              aria-expanded={panels.bottom}
+              onClick={() => togglePanel('bottom')}
+            >
+              <ChevronDown size={17} />
+            </button>
             <div className="stats-caption">
               Selected matrix: {active.name}
               {!active.visible ? ' · hidden' : ''}
@@ -676,7 +874,7 @@ export default function Home() {
               <div>
                 <span>RANK</span>
                 <strong>
-                  {rank(matrix)}
+                  {dimension}
                   <small>/ 3 dimensions</small>
                 </strong>
               </div>
@@ -694,7 +892,7 @@ export default function Home() {
                 </strong>
               </div>
             </div>
-            <div className="timeline">
+            <div className="timeline" hidden={mode === 'span'}>
               <button
                 className="play-button"
                 aria-label={
@@ -731,10 +929,14 @@ export default function Home() {
               </div>
             </div>
             <div className="interpolation-note">
-              Linear interpolation · A(t) = (1 − t)I + tA
+              {mode === 'span'
+                ? dimension === 0
+                  ? 'The zero matrix spans only the origin.'
+                  : 'Span extends infinitely; the plot shows a finite window.'
+                : 'Linear interpolation · A(t) = (1 − t)I + tA'}
             </div>
           </div>
-          <div className="scene-help">
+          <div className="scene-help" hidden={!panels.bottom}>
             Drag to orbit <b>·</b> Scroll to zoom <b>·</b> Right-drag to pan
           </div>
         </section>

@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+[hidden] {
+  display: none !important;
+}
 :root {
   font-family: Arial, Helvetica, sans-serif;
   color: #e9eef0;
@@ -973,6 +976,7 @@ button:hover {
 }
 .viewport {
   position: sticky;
+  width: 100%;
   top: 0;
   height: calc(100dvh - 0px);
   min-height: 790px;
@@ -1001,5 +1005,209 @@ button:hover {
   }
   .stats-caption {
     margin-bottom: 8px;
+  }
+}
+
+.panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 32px;
+  height: 32px;
+  padding: 6px;
+  border: 1px solid #34474b;
+  border-radius: 6px;
+  background: #182428ed;
+  color: #a9bec0;
+  flex-shrink: 0;
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #9badb0;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  margin-bottom: -12px;
+}
+.layout-controls {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+.focus-toggle {
+  height: 43px;
+  min-width: 43px;
+}
+.layout-controls .panel-toggle {
+  height: 43px;
+}
+.restore-panels {
+  opacity: 0.65;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.restore-panels:hover,
+.restore-panels:focus-visible {
+  opacity: 1;
+}
+.scene-top {
+  right: 82px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+.header-collapsed .scene-top {
+  right: 128px;
+}
+.restore-editor,
+.restore-toolbar,
+.restore-camera,
+.restore-bottom {
+  position: absolute;
+  z-index: 4;
+}
+.restore-editor {
+  top: 29px;
+  left: 20px;
+}
+.editor-hidden .scene-top,
+.editor-hidden .restore-toolbar {
+  left: 62px;
+}
+.restore-toolbar {
+  top: 29px;
+  left: 28px;
+}
+.restore-camera {
+  top: 110px;
+  right: 28px;
+}
+.restore-bottom {
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.camera-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  color: #768f94;
+  font-size: 11px;
+  letter-spacing: 1px;
+  margin-bottom: 5px;
+}
+.camera-controls .panel-toggle {
+  width: 28px;
+  height: 25px;
+}
+.collapse-bottom {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+}
+.stats-caption {
+  padding-right: 28px;
+}
+.span-caption {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9ab1b5;
+  margin-top: 0;
+}
+.span-mode .legend {
+  bottom: 225px;
+}
+.app-body.editor-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: calc(100dvh - 76px);
+}
+.editor-collapsed .viewport {
+  height: calc(100dvh - 76px);
+  min-height: 0;
+}
+.header-collapsed .app-body {
+  min-height: 100dvh;
+}
+.header-collapsed .editor-collapsed .viewport {
+  height: 100dvh;
+}
+.focus-mode {
+  height: 100dvh;
+  overflow: hidden;
+}
+.focus-mode .viewport {
+  position: relative;
+  height: 100dvh;
+  min-height: 0;
+}
+@media (max-width: 760px) {
+  .layout-controls {
+    top: 17px;
+    right: 12px;
+  }
+  .scene-top {
+    right: 68px;
+  }
+  .header-collapsed .scene-top {
+    top: 70px;
+    left: 12px;
+    right: 12px;
+  }
+  .header-collapsed .editor-hidden .scene-top {
+    left: 12px;
+  }
+  .view-tabs button {
+    padding: 9px 7px;
+    gap: 5px;
+    font-size: 12px;
+  }
+  .scene-title {
+    top: 144px;
+    right: 80px;
+  }
+  .scene-title h2 {
+    font-size: 17px;
+  }
+  .camera-controls,
+  .restore-camera {
+    top: 178px;
+    right: 14px;
+  }
+  .restore-editor,
+  .restore-toolbar {
+    top: 22px;
+    left: 12px;
+  }
+  .editor-hidden .scene-top,
+  .editor-hidden .restore-toolbar {
+    left: 54px;
+  }
+  .editor-collapsed .viewport {
+    height: calc(100dvh - 65px);
+    min-height: 0;
+  }
+  .app-body.editor-collapsed {
+    min-height: calc(100dvh - 65px);
+  }
+  .header-collapsed .app-body.editor-collapsed {
+    min-height: 100dvh;
+  }
+  .span-mode .legend {
+    bottom: 215px;
   }
 }

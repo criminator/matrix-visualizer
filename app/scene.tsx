@@ -9,7 +9,8 @@ import {
 } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { Matrix } from '../lib/matrix';
+import { columnSpace, type Matrix } from '../lib/matrix';
+export type DisplayMode = 'transform' | 'vectors' | 'span';
 export type SceneHandle = { view: (name: string) => void };
 export type Plot = {
   id: string;
@@ -25,16 +26,19 @@ export type SceneProps = {
   grid: boolean;
   original: boolean;
   vectors: boolean;
-  mode: 'transform' | 'vectors';
+  mode: DisplayMode;
   highlight: number | null;
+  bottomPanelVisible: boolean;
 };
 const colors = [0xfa9a80, 0xbafb73, 0x83b6fc];
 export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
   const host = useRef<HTMLDivElement>(null),
     latest = useRef(props),
-    api = useRef<{ update: () => void; view: (name: string) => void } | null>(
-      null,
-    );
+    api = useRef<{
+      update: () => void;
+      view: (name: string) => void;
+      resize: () => void;
+    } | null>(null);
   const [error, setError] = useState('');
   useLayoutEffect(() => {
     latest.current = props;
@@ -60,6 +64,12 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     props.mode,
     props.highlight,
   ]);
+  useEffect(() => {
+    api.current?.resize();
+  }, [props.bottomPanelVisible]);
+  useEffect(() => {
+    api.current?.view('fit');
+  }, [props.mode]);
   useEffect(() => {
     const el = host.current!;
     let renderer: THREE.WebGLRenderer;
@@ -179,6 +189,32 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       keep(new THREE.MeshBasicMaterial({ color: 0xdde9e4 })),
     );
     scene.add(origin);
+    const spanRadius = 5;
+    const spanPointGeometry = keep(new THREE.SphereGeometry(0.08, 16, 12));
+    const spanLineGeometry = keep(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-spanRadius, 0, 0),
+        new THREE.Vector3(spanRadius, 0, 0),
+      ]),
+    );
+    const spanPlaneGeometry = keep(
+      new THREE.PlaneGeometry(spanRadius * 2, spanRadius * 2),
+    );
+    const spanBoxGeometry = keep(
+      new THREE.BoxGeometry(spanRadius * 2, spanRadius * 2, spanRadius * 2),
+    );
+    const spanBoxEdges = keep(new THREE.EdgesGeometry(spanBoxGeometry));
+    const spanGridPoints: THREE.Vector3[] = [];
+    for (let i = -spanRadius; i <= spanRadius; i++)
+      spanGridPoints.push(
+        new THREE.Vector3(i, -spanRadius, 0),
+        new THREE.Vector3(i, spanRadius, 0),
+        new THREE.Vector3(-spanRadius, i, 0),
+        new THREE.Vector3(spanRadius, i, 0),
+      );
+    const spanGridGeometry = keep(
+      new THREE.BufferGeometry().setFromPoints(spanGridPoints),
+    );
     function createPlot(plot: Plot) {
       const owned: { dispose: () => void }[] = [];
       const root = new THREE.Group();
@@ -203,6 +239,45 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         new THREE.Mesh(cubeGeometry, fill),
         new THREE.LineSegments(edges, stroke),
       );
+      const span = new THREE.Group();
+      span.matrixAutoUpdate = false;
+      root.add(span);
+      const spanFill = new THREE.MeshBasicMaterial({
+        color: plot.color,
+        transparent: true,
+        opacity: 0.1,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const spaceFill = spanFill.clone();
+      spaceFill.opacity = 0.025;
+      const spanGridMaterial = new THREE.LineBasicMaterial({
+        color: plot.color,
+        transparent: true,
+        opacity: 0.35,
+      });
+      const pointMaterial = new THREE.MeshBasicMaterial({
+        color: plot.color,
+        depthTest: false,
+      });
+      owned.push(spanFill, spaceFill, spanGridMaterial, pointMaterial);
+      const plane = new THREE.Group();
+      plane.add(
+        new THREE.Mesh(spanPlaneGeometry, spanFill),
+        new THREE.LineSegments(spanGridGeometry, spanGridMaterial),
+      );
+      const space = new THREE.Group();
+      space.add(
+        new THREE.Mesh(spanBoxGeometry, spaceFill),
+        new THREE.LineSegments(spanBoxEdges, spanGridMaterial),
+      );
+      const spanShapes = [
+        new THREE.Mesh(spanPointGeometry, pointMaterial),
+        new THREE.LineSegments(spanLineGeometry, stroke),
+        plane,
+        space,
+      ];
+      span.add(...spanShapes);
       const arrows = [0, 1, 2].map((i) => {
         const arrow = new THREE.ArrowHelper(
           new THREE.Vector3().setComponent(i, 1),
@@ -227,6 +302,10 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       return {
         root,
         transformed,
+        span,
+        spanShapes,
+        spanKey: '',
+        spanDimension: 0,
         fill,
         stroke,
         arrows,
@@ -260,9 +339,14 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
           objects.set(plot.id, object);
         }
         object.root.visible = plot.visible;
-        const m = plot.matrix.map((row, r) =>
-          row.map((v, c) => (r === c ? 1 - p.progress : 0) + p.progress * v),
-        );
+        const m =
+          p.mode === 'span'
+            ? plot.matrix
+            : plot.matrix.map((row, r) =>
+                row.map(
+                  (v, c) => (r === c ? 1 - p.progress : 0) + p.progress * v,
+                ),
+              );
         object.transformed.matrix.set(
           m[0][0],
           m[0][1],
@@ -283,6 +367,37 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         );
         object.transformed.matrixWorldNeedsUpdate = true;
         object.transformed.visible = p.mode === 'transform';
+        object.span.visible = p.mode === 'span';
+        if (p.mode === 'span') {
+          const key = plot.matrix.flat().join(',');
+          if (object.spanKey !== key) {
+            const basis = columnSpace(plot.matrix).map(
+              (vector) => new THREE.Vector3(...vector),
+            );
+            object.spanDimension = basis.length;
+            object.spanKey = key;
+            object.span.matrix.identity();
+            if (basis.length === 1)
+              object.span.matrix.makeRotationFromQuaternion(
+                new THREE.Quaternion().setFromUnitVectors(
+                  new THREE.Vector3(1, 0, 0),
+                  basis[0],
+                ),
+              );
+            if (basis.length === 2)
+              object.span.matrix.makeBasis(
+                basis[0],
+                basis[1],
+                new THREE.Vector3()
+                  .crossVectors(basis[0], basis[1])
+                  .normalize(),
+              );
+            object.span.matrixWorldNeedsUpdate = true;
+            object.spanShapes.forEach((shape, i) => {
+              shape.visible = i === basis.length;
+            });
+          }
+        }
         object.stroke.opacity = plot.id === p.activeId ? 1 : 0.65;
         object.arrows.forEach((a, i) => {
           const v = new THREE.Vector3(m[0][i], m[1][i], m[2][i]),
@@ -316,13 +431,23 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         height = el.clientHeight;
       renderer.setSize(width, height);
       camera.aspect = width / height;
-      camera.setViewOffset(width, height, 0, height * 0.12, width, height);
+      camera.setViewOffset(
+        width,
+        height,
+        0,
+        latest.current.bottomPanelVisible ? height * 0.12 : 0,
+        width,
+        height,
+      );
       camera.updateProjectionMatrix();
       render();
     };
     const view = (name: string) => {
       const p = latest.current;
-      let center = new THREE.Vector3(0.5, 0.5, 0.5),
+      let center =
+          p.mode === 'span'
+            ? new THREE.Vector3()
+            : new THREE.Vector3(0.5, 0.5, 0.5),
         distance = 6.8;
       if (name === 'fit') {
         const bounds = new THREE.Box3();
@@ -331,6 +456,15 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
           if (!plot.visible) continue;
           const object = objects.get(plot.id);
           if (!object) continue;
+          if (p.mode === 'span') {
+            object.root.updateMatrixWorld(true);
+            bounds.union(
+              new THREE.Box3().setFromObject(
+                object.spanShapes[object.spanDimension],
+              ),
+            );
+            continue;
+          }
           for (let x = 0; x <= 1; x++)
             for (let y = 0; y <= 1; y++)
               for (let z = 0; z <= 1; z++)
@@ -374,7 +508,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       );
     };
     renderer.domElement.addEventListener('webglcontextlost', lost);
-    api.current = { update, view };
+    api.current = { update, view, resize };
     resize();
     view('perspective');
     update();

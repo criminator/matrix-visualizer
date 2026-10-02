@@ -34,13 +34,15 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useMatrixWorkspace, type Plot } from '@/hooks/use-matrix-workspace';
 import { usePersistedState } from '@/hooks/use-persisted-state';
-import { determinant, rank, sameSpan } from '@/lib/matrix';
+import { usePoints } from '@/hooks/use-points';
+import { determinant, eigen, rank, sameSpan } from '@/lib/matrix';
 import { registerMatrixTool } from '@/lib/webmcp';
 import { cn } from '@/lib/utils';
 import Scene, {
   type CameraView,
   type DisplayMode,
   type SceneHandle,
+  type ScenePoint,
 } from './scene';
 
 // Mobile bottom-sheet snap points: peek (stats), half (grid), full.
@@ -54,6 +56,7 @@ const SPAN_NAMES = ['Origin only', 'Line', 'Plane', 'All of ℝ³'];
 export default function Home() {
   const ws = useMatrixWorkspace();
   const { active } = ws;
+  const points = usePoints();
   const isMobile = useIsMobile();
   const scene = useRef<SceneHandle>(null);
 
@@ -63,6 +66,7 @@ export default function Home() {
   const [grid, setGrid] = usePersistedState('matrix-space:grid', true);
   const [original, setOriginal] = usePersistedState('matrix-space:original', true);
   const [vectors, setVectors] = usePersistedState('matrix-space:vectors', true);
+  const [eigenvectors, setEigenvectors] = usePersistedState('matrix-space:eigen', false);
   const [sidebarOpen, setSidebarOpen] = usePersistedState('matrix-space:sidebar', true);
   const [focus, setFocus] = usePersistedState('matrix-space:focus', false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -72,11 +76,13 @@ export default function Home() {
 
   const det = determinant(active.matrix);
   const dimension = rank(active.matrix);
+  const eigenInfo = eigen(active.matrix);
   const visiblePlots = ws.plots.filter((p) => p.visible);
   const layers = [
     { label: 'Reference grid', checked: grid, onChange: setGrid },
     { label: 'Original cube', checked: original, onChange: setOriginal },
     { label: 'Basis vectors', checked: vectors, onChange: setVectors },
+    { label: 'Eigenvectors', checked: eigenvectors, onChange: setEigenvectors },
   ];
 
   const bottomInset = focus ? 0 : isMobile ? sheetHeight : dockHeight + 16;
@@ -121,6 +127,7 @@ export default function Home() {
           return;
         ws.togglePlay();
       } else if (e.key === 'f' || e.key === 'F') toggleFocus();
+      else if (e.key === 'e' || e.key === 'E') setEigenvectors((on) => !on);
       else if (e.key === 'Escape' && focus) setFocus(false);
       else if ((e.key === 's' || e.key === 'S') && !isMobile)
         setSidebarOpen((open) => !open);
@@ -144,6 +151,7 @@ export default function Home() {
   const editor = (
     <EditorPanel
       ws={ws}
+      points={points}
       highlight={highlight}
       onHighlight={setHighlight}
       layers={layers}
@@ -210,11 +218,13 @@ export default function Home() {
           <Scene
             ref={scene}
             plots={ws.plots}
+            points={points.plotted}
             activeId={active.id}
             progress={ws.progress}
             grid={grid}
             original={original}
             vectors={vectors}
+            eigen={eigenvectors}
             mode={mode}
             highlight={highlight}
             bottomInset={bottomInset}
@@ -227,7 +237,10 @@ export default function Home() {
           </p>
 
           {focus ? (
-            <FocusOverlay plots={visiblePlots} onExit={() => setFocus(false)} />
+            <FocusOverlay
+              plots={visiblePlots}
+              points={points.plotted}
+              onExit={() => setFocus(false)} />
           ) : (
             <div className="pointer-events-none absolute inset-0 flex flex-col gap-4 p-3 sm:p-4">
               <div className="flex items-start justify-between gap-3">
@@ -248,6 +261,7 @@ export default function Home() {
                   ws={ws}
                   det={det}
                   rank={dimension}
+                  eigen={eigenInfo}
                   mode={mode}
                   className="mx-auto mt-auto w-full max-w-4xl"
                 />
@@ -289,6 +303,7 @@ export default function Home() {
                 ws={ws}
                 det={det}
                 rank={dimension}
+                eigen={eigenInfo}
                 mode={mode}
                 className="rounded-none border-0 bg-transparent px-5 pt-1 pb-0 shadow-none backdrop-blur-none"
               />
@@ -348,7 +363,18 @@ function SceneTitle({
   );
 }
 
-function FocusOverlay({ plots, onExit }: { plots: Plot[]; onExit: () => void }) {
+// Points beyond this are summarized so the legend stays one line or two.
+const LEGEND_POINTS = 8;
+
+function FocusOverlay({
+  plots,
+  points,
+  onExit,
+}: {
+  plots: Plot[];
+  points: ScenePoint[];
+  onExit: () => void;
+}) {
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4">
       <Button
@@ -359,13 +385,22 @@ function FocusOverlay({ plots, onExit }: { plots: Plot[]; onExit: () => void }) 
       >
         <Minimize2 /> Exit focus
       </Button>
-      <ul aria-label="Plotted matrices" className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+      <ul aria-label="Plotted matrices and points" className="flex flex-wrap gap-4 text-xs text-muted-foreground">
         {plots.map((p) => (
           <li key={p.id} className="flex items-center gap-1.5">
             <span aria-hidden className="size-2 rounded-full" style={{ background: p.color }} />
             {p.id === 'composition' ? `${p.name} (composition)` : p.name}
           </li>
         ))}
+        {points.slice(0, LEGEND_POINTS).map((p) => (
+          <li key={`point-${p.name}`} className="flex items-center gap-1.5">
+            <span aria-hidden className="size-1.5 rounded-full" style={{ background: p.color }} />
+            {p.name}
+          </li>
+        ))}
+        {points.length > LEGEND_POINTS && (
+          <li>+{points.length - LEGEND_POINTS} more points</li>
+        )}
       </ul>
     </div>
   );

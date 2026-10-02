@@ -9,7 +9,13 @@ import {
 } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { columnSpace, type Matrix } from '../lib/matrix';
+import {
+  columnSpace,
+  eigen,
+  formatEigenvalue,
+  type Matrix,
+  type Vector,
+} from '../lib/matrix';
 export type DisplayMode = 'transform' | 'vectors' | 'span';
 export type CameraView = '3d' | 'xy' | 'xz' | 'yz';
 // 'fit' reframes everything while keeping the current viewing direction.
@@ -21,13 +27,18 @@ export type Plot = {
   matrix: Matrix;
   visible: boolean;
 };
+export type ScenePoint = { point: Vector; name: string; color: string };
 export type SceneProps = {
   plots: Plot[];
+  // Static markers; matrices don't transform them.
+  points: ScenePoint[];
   activeId: string;
   progress: number;
   grid: boolean;
   original: boolean;
   vectors: boolean;
+  // Eigenvectors of the active matrix, outside span mode.
+  eigen: boolean;
   mode: DisplayMode;
   highlight: number | null;
   // Pixels of the canvas covered by overlays at the bottom; the view is
@@ -62,11 +73,13 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     api.current?.update();
   }, [
     props.plots,
+    props.points,
     props.activeId,
     props.progress,
     props.grid,
     props.original,
     props.vectors,
+    props.eigen,
     props.mode,
     props.highlight,
   ]);
@@ -146,20 +159,33 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     const grid = line(gridPoints, 0x647c82, 0.18);
     scene.add(grid);
     const labelFont = getComputedStyle(document.body).fontFamily;
-    // Screen-space labels: fixed on-screen size at any zoom level.
-    function label(text: string, color: string, owned = resources) {
+    // Screen-space labels: fixed on-screen size at any zoom level. The canvas
+    // widens for long names; 'left' labels start at the sprite's left edge.
+    function label(
+      text: string,
+      color: string,
+      owned = resources,
+      align: 'center' | 'left' = 'center',
+    ) {
+      const font = `600 64px ${labelFont}`;
       const canvas = document.createElement('canvas');
-      canvas.width = 256;
+      const measure = canvas.getContext('2d')!;
+      measure.font = font;
+      // Padding leaves room for the outline stroke.
+      const width = Math.ceil(measure.measureText(text).width) + 24;
+      canvas.width = align === 'center' ? Math.max(256, width) : width;
       canvas.height = 128;
+      // Resizing the canvas resets the context, so style it afterwards.
       const ctx = canvas.getContext('2d')!;
-      ctx.font = `600 64px ${labelFont}`;
-      ctx.textAlign = 'center';
+      const x = align === 'center' ? canvas.width / 2 : 12;
+      ctx.font = font;
+      ctx.textAlign = align;
       ctx.textBaseline = 'middle';
       ctx.lineWidth = 10;
       ctx.strokeStyle = '#101719';
-      ctx.strokeText(text, 128, 64);
+      ctx.strokeText(text, x, 64);
       ctx.fillStyle = color;
-      ctx.fillText(text, 128, 64);
+      ctx.fillText(text, x, 64);
       const texture = new THREE.CanvasTexture(canvas);
       texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
       const material = new THREE.SpriteMaterial({
@@ -170,7 +196,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       });
       owned.push(texture, material);
       const sprite = new THREE.Sprite(material);
-      sprite.scale.set(0.056, 0.028, 1);
+      sprite.scale.set((0.056 * canvas.width) / 256, 0.028, 1);
       sprite.renderOrder = 10;
       return sprite;
     }
@@ -237,6 +263,210 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     const spanGridGeometry = keep(
       new THREE.BufferGeometry().setFromPoints(spanGridPoints),
     );
+    // Screen-space dots like the labels, so points stay visible at any zoom.
+    // The fill is white so each point's material color tints it; the dark
+    // outline stays dark.
+    const dot = document.createElement('canvas');
+    dot.width = dot.height = 64;
+    const dotCtx = dot.getContext('2d')!;
+    dotCtx.arc(32, 32, 26, 0, Math.PI * 2);
+    dotCtx.fillStyle = '#ffffff';
+    dotCtx.fill();
+    dotCtx.lineWidth = 6;
+    dotCtx.strokeStyle = '#101719';
+    dotCtx.stroke();
+    const dotTexture = keep(new THREE.CanvasTexture(dot));
+    const markers = new THREE.Group();
+    scene.add(markers);
+    let markerKey = '';
+    let markerResources: { dispose: () => void }[] = [];
+    // Rebuilt only when the points change; each owns its material and label.
+    const syncPoints = (points: ScenePoint[]) => {
+      const key = points
+        .map((p) => `${p.name} ${p.color} ${p.point.join(',')}`)
+        .join('|');
+      if (key === markerKey) return;
+      markerKey = key;
+      markers.clear();
+      markerResources.forEach((r) => r.dispose());
+      markerResources = [];
+      for (const { point, name, color } of points) {
+        const material = new THREE.SpriteMaterial({
+          map: dotTexture,
+          color,
+          depthTest: false,
+          sizeAttenuation: false,
+        });
+        markerResources.push(material);
+        const marker = new THREE.Sprite(material);
+        marker.scale.set(0.016, 0.016, 1);
+        marker.renderOrder = 9;
+        marker.position.set(...point);
+        const text = label(name, color, markerResources, 'left');
+        // Up and right of the dot at any zoom: start just past its radius.
+        text.center.set(-0.0075 / text.scale.x, -0.15);
+        text.position.set(...point);
+        markers.add(marker, text);
+      }
+    };
+    // Eigenvectors of the active matrix: dashed lines and discs that stay put
+    // while the animation's (1 − t)I + tA scales everything on them by
+    // (1 − t) + tλ. Probe arrows show that factor on each eigenline.
+    const EIGEN_LINE = 40;
+    const EIGEN_DISC = 1.5;
+    const ROTATION_DISC = 1.5;
+    const eigenGroup = new THREE.Group();
+    scene.add(eigenGroup);
+    let eigenKey = '';
+    let eigenResources: { dispose: () => void }[] = [];
+    let eigenProbes: {
+      arrow: THREE.ArrowHelper;
+      direction: THREE.Vector3;
+      value: number;
+    }[] = [];
+    function dashed(points: THREE.Vector3[], color: string, loop = false) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineDashedMaterial({
+        color,
+        dashSize: 0.14,
+        gapSize: 0.1,
+        transparent: true,
+        opacity: 0.75,
+      });
+      eigenResources.push(geometry, material);
+      const line = loop
+        ? new THREE.LineLoop(geometry, material)
+        : new THREE.LineSegments(geometry, material);
+      line.computeLineDistances();
+      return line;
+    }
+    // A dashed circle (optionally filled) in the plane of orthonormal u, v.
+    function disc(
+      u: Vector,
+      v: Vector,
+      radius: number,
+      color: string,
+      fill: number,
+    ) {
+      const group = new THREE.Group();
+      const circle = Array.from({ length: 96 }, (_, i) => {
+        const angle = (i / 96) * Math.PI * 2;
+        return new THREE.Vector3(
+          Math.cos(angle) * radius,
+          Math.sin(angle) * radius,
+          0,
+        );
+      });
+      group.add(dashed(circle, color, true));
+      if (fill) {
+        const geometry = new THREE.CircleGeometry(radius, 96);
+        const material = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: fill,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        eigenResources.push(geometry, material);
+        group.add(new THREE.Mesh(geometry, material));
+      }
+      const a = new THREE.Vector3(...u),
+        b = new THREE.Vector3(...v);
+      group.matrixAutoUpdate = false;
+      group.matrix.makeBasis(a, b, a.clone().cross(b));
+      return group;
+    }
+    function buildEigen(plot: Plot) {
+      eigenGroup.clear();
+      eigenResources.forEach((r) => r.dispose());
+      eigenProbes.forEach((probe) => probe.arrow.dispose());
+      eigenResources = [];
+      eigenProbes = [];
+      const { spaces, complex } = eigen(plot.matrix);
+      for (const { value, basis } of spaces) {
+        const text = `λ = ${formatEigenvalue(value)}`;
+        if (basis.length === 1) {
+          const direction = new THREE.Vector3(...basis[0]);
+          eigenGroup.add(
+            dashed(
+              [
+                direction.clone().multiplyScalar(-EIGEN_LINE),
+                direction.clone().multiplyScalar(EIGEN_LINE),
+              ],
+              plot.color,
+            ),
+          );
+          const arrow = new THREE.ArrowHelper(
+            direction,
+            new THREE.Vector3(),
+            1,
+            plot.color,
+            0.12,
+            0.07,
+          );
+          eigenGroup.add(arrow);
+          eigenProbes.push({ arrow, direction, value });
+          // Beyond where the probe ends at full progress, and clear of a
+          // column vector's label there (a column is λv when e_j is an
+          // eigenvector).
+          const tag = label(text, plot.color, eigenResources);
+          tag.position
+            .copy(direction)
+            .multiplyScalar(
+              Math.sign(value || 1) * (Math.max(Math.abs(value), 1) + 0.8),
+            );
+          eigenGroup.add(tag);
+        } else if (basis.length === 2) {
+          eigenGroup.add(
+            disc(basis[0], basis[1], EIGEN_DISC, plot.color, 0.05),
+          );
+          // On the rim, between the two (positive-leaning) basis vectors.
+          const tag = label(text, plot.color, eigenResources);
+          tag.position
+            .set(...basis[0])
+            .add(new THREE.Vector3(...basis[1]))
+            .setLength(EIGEN_DISC + 0.3);
+          eigenGroup.add(tag);
+        }
+        // A 3D eigenspace (λI) is all of space; the stats dock says so.
+      }
+      if (complex?.plane.length === 2) {
+        const [u, v] = complex.plane;
+        eigenGroup.add(disc(u, v, ROTATION_DISC, plot.color, 0));
+        const tag = label(
+          `λ = ${formatEigenvalue(complex.re)} ± ${formatEigenvalue(complex.im)}i`,
+          plot.color,
+          eigenResources,
+        );
+        tag.position
+          .set(...u)
+          .add(new THREE.Vector3(...v))
+          .setLength(ROTATION_DISC + 0.3);
+        eigenGroup.add(tag);
+      }
+    }
+    const syncEigen = (p: SceneProps) => {
+      const plot = p.plots.find((x) => x.id === p.activeId);
+      eigenGroup.visible = !!plot?.visible && p.eigen && p.mode !== 'span';
+      if (!plot || !eigenGroup.visible) return;
+      const key = plot.color + plot.matrix.flat().join(',');
+      if (key !== eigenKey) {
+        eigenKey = key;
+        buildEigen(plot);
+      }
+      for (const { arrow, direction, value } of eigenProbes) {
+        const factor = 1 - p.progress + p.progress * value;
+        const length = Math.abs(factor);
+        arrow.visible = length > 1e-3;
+        if (!arrow.visible) continue;
+        arrow.setDirection(direction.clone().multiplyScalar(Math.sign(factor)));
+        arrow.setLength(
+          length,
+          Math.min(length * 0.2, 0.12),
+          Math.min(length * 0.1, 0.07),
+        );
+      }
+    };
     function createPlot(plot: Plot) {
       const owned: { dispose: () => void }[] = [];
       const root = new THREE.Group();
@@ -458,6 +688,8 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
             .add(v.clone().normalize().multiplyScalar(0.18));
         });
       }
+      syncPoints(p.points);
+      syncEigen(p);
       reference.visible = p.original && p.mode === 'transform';
       grid.visible = p.grid;
       render();
@@ -516,6 +748,8 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       }
       if (p.original && p.mode === 'transform')
         bounds.expandByPoint(new THREE.Vector3(1, 1, 1));
+      for (const { point } of p.points)
+        bounds.expandByPoint(new THREE.Vector3(...point));
       const center = bounds.getCenter(new THREE.Vector3());
       // Frame within the part of the canvas not covered by overlays.
       const height = el.clientHeight || 1;
@@ -560,6 +794,9 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       cancelAnimationFrame(frame);
       resources.forEach((r) => r.dispose());
       objects.forEach((object) => object.dispose());
+      markerResources.forEach((r) => r.dispose());
+      eigenResources.forEach((r) => r.dispose());
+      eigenProbes.forEach((probe) => probe.arrow.dispose());
       renderer.domElement.removeEventListener('webglcontextlost', lost);
       renderer.dispose();
       renderer.domElement.remove();

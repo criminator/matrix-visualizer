@@ -9,6 +9,7 @@ export const SHORTCUTS: [string, string][] = [
   ['1 – 4', 'Camera: 3D, XY, XZ, YZ'],
   ['0', 'Fit to view'],
   ['F', 'Toggle focus mode'],
+  ['E', 'Toggle eigenvectors'],
   ['S', 'Toggle sidebar'],
   ['?', 'Show shortcuts'],
   ['↑ ↓ ← →', 'Move between matrix cells'],

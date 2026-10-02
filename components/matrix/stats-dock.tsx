@@ -4,6 +4,7 @@ import { Pause, Play } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 import type { DisplayMode } from '@/app/scene';
+import { formatEigenvalue as format, type Eigen } from '@/lib/matrix';
 import type { Entry, Workspace } from '@/hooks/use-matrix-workspace';
 import { IconButton } from './icon-button';
 
@@ -11,6 +12,7 @@ type Props = {
   ws: Workspace;
   det: number;
   rank: number;
+  eigen: Eigen;
   mode: DisplayMode;
   className?: string;
 };
@@ -22,9 +24,40 @@ const orientation = (det: number) =>
       ? 'Orientation flipped'
       : 'Orientation kept';
 
-function Stat({ label, value, note }: { label: string; value: string; note: string }) {
+// Eigenvalues (repeats as ×2) and the shape of their eigenspaces.
+function eigenSummary({ spaces, complex }: Eigen) {
+  const values = spaces.map(({ value, multiplicity }) =>
+    multiplicity > 1 ? `${format(value)} ×${multiplicity}` : format(value),
+  );
+  if (complex) values.push(`${format(complex.re)} ± ${format(complex.im)}i`);
+  const dims = spaces.map((s) => s.basis.length);
+  const count = (d: number, one: string, many: string) => {
+    const n = dims.filter((x) => x === d).length;
+    return n === 0 ? [] : [n === 1 ? one : `${n} ${many}`];
+  };
+  let note = complex
+    ? 'axis + rotation'
+    : dims[0] === 3
+      ? 'every vector'
+      : [...count(2, 'plane', 'planes'), ...count(1, 'line', 'lines')].join(' + ');
+  const defective = spaces.some((s) => s.basis.length < s.multiplicity);
+  if (defective) note += ', defective';
+  return { value: values.join(', '), note, defective };
+}
+
+function Stat({
+  label,
+  value,
+  note,
+  title,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  title?: string;
+}) {
   return (
-    <div className="flex min-w-0 flex-col">
+    <div className="flex min-w-0 flex-col" title={title}>
       <span className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
         {label}
       </span>
@@ -46,9 +79,25 @@ function Swatch({ entry }: { entry: Entry }) {
   );
 }
 
+function EigenStat({ eigen }: { eigen: Eigen }) {
+  const { value, note, defective } = eigenSummary(eigen);
+  return (
+    <Stat
+      label="eigenvalues"
+      value={value}
+      note={note}
+      title={
+        defective
+          ? 'Defective: too few eigenvectors to span space, so the matrix is not diagonalizable.'
+          : undefined
+      }
+    />
+  );
+}
+
 // Statistics for the active matrix plus the transformation timeline.
 export const StatsDock = forwardRef<HTMLDivElement, Props>(function StatsDock(
-  { ws, det, rank, mode, className },
+  { ws, det, rank, eigen, mode, className },
   ref,
 ) {
   return (
@@ -60,10 +109,11 @@ export const StatsDock = forwardRef<HTMLDivElement, Props>(function StatsDock(
       )}
     >
       <Swatch entry={ws.active} />
-      <div className="flex gap-6">
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
         <Stat label="det" value={String(Number(det.toFixed(3)))} note={orientation(det)} />
         <Stat label="rank" value={String(rank)} note="of 3" />
         <Stat label="volume" value={`${Number(Math.abs(det).toFixed(3))}×`} note="scale" />
+        <EigenStat eigen={eigen} />
       </div>
       {mode === 'span' ? (
         <p className="min-w-48 flex-1 text-xs text-muted-foreground">

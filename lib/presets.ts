@@ -49,3 +49,5 @@ export const palette = [
   '#ffc75e',
   '#70e0d5',
 ];
+// Default for new points; outside the matrix palette and the composition's white.
+export const pointColor = '#ff7eb6';

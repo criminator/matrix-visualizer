@@ -35,6 +35,24 @@ Use **Add matrix** to create another 3×3 matrix. Select a row to edit it; each 
 
 Enable **Plot a composition** to evaluate products such as `A * B` (B acts first). The white result updates when operands change. Renaming updates expression references; deleting an operand shows an error and removes the result until the expression is corrected. Hidden matrices remain valid operands. The scrubber animates all plotted matrices together, and Fit frames all visible transformations.
 
+## Points
+
+Open the **Points** card to plot fixed reference points. Points are static: matrices do not transform them, and they appear in every display mode. Each point has a name (shown as its label in the scene) and a color. New points are named `P1`, `P2`, … and colored pink. Point names follow the matrix naming rules and must be unique among points. An invalid name keeps the last valid one until it is fixed; leaving the field discards it.
+
+Edit points as rows (color swatch, name, x/y/z), or switch to **Text** and enter one point per line, such as `Q: (1, 2, 3) #f0a`. The name (before `:` or `=`) and the `#rgb`/`#rrggbb` color (after the coordinates) are optional; unnamed points get the next free `P` name, and uncolored points use the default pink, which text mode leaves out. Text mode also accepts `[[1,2,3],[4,5,6]]`, `[1 2 3; 4 5 6]`, and pasted spreadsheet rows. Pasting a list into any row cell replaces that row with the pasted points. Coordinates use the same expression syntax as matrix cells. Up to 50 points are supported. Fit frames the plotted points, and collapsing the card hides them.
+
+## Eigenvectors
+
+The statistics dock lists the selected matrix's eigenvalues, with repeats marked `×2` or `×3` and complex pairs written `a ± bi`. A short note describes the eigenspaces: lines, a plane, every vector, or an axis plus a rotation. "Defective" means there are too few eigenvectors to span space, so the matrix is not diagonalizable (hover for details).
+
+Turn on the **Eigenvectors** scene layer (or press `E`) to draw them for the selected matrix in Transformation and Vectors modes:
+
+- **Eigenlines** are dashed lines through the origin. Each has a probe arrow showing where its unit eigenvector lands. Because the scrubber blends `(1-t)I + tA`, every eigenvector of A stays on its line throughout the animation, scaled by `(1-t) + tλ`. The probe grows, shrinks, or flips through the origin while the rest of space moves around it.
+- **Eigenplanes** (a repeated eigenvalue with two independent eigenvectors) are faint discs.
+- **Complex pairs** draw their real invariant plane as a dashed circle: the plane the matrix rotates (and scales) within.
+
+Eigenvectors are hidden in Span mode and when the selected matrix is hidden. Eigenvalues are roots of the characteristic cubic, solved on the matrix scaled to unit size. Values within about 1e-5 of each other (relative to the largest entry) count as repeated. Each eigenvector's sign is chosen so its largest component is positive.
+
 ## Display modes and panels
 
 Choose **Transformation**, **Vectors**, or **Span** in the display toolbar. Span shows the column space of each visible input matrix (and the composition, when enabled): the origin for rank 0, a line for rank 1, a plane for rank 2, and all of ℝ³ for rank 3. Colors match the matrix overlays. The displayed line, plane, and space are finite windows into unbounded subspaces. Span uses the input matrix directly; animation is available in the other modes.

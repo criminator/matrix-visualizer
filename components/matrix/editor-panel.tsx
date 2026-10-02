@@ -1,14 +1,17 @@
 'use client';
 import { Separator } from '@/components/ui/separator';
 import type { Workspace } from '@/hooks/use-matrix-workspace';
+import type { Points } from '@/hooks/use-points';
 import { CompositionCard } from './composition-card';
 import { MatrixEditor } from './matrix-editor';
 import { MatrixList } from './matrix-list';
+import { PointsCard } from './points-card';
 import { PresetGrid } from './preset-grid';
 import { SceneLayers, type Layer } from './scene-layers';
 
 type Props = {
   ws: Workspace;
+  points: Points;
   highlight: number | null;
   onHighlight: (column: number | null) => void;
   layers: Layer[];
@@ -20,6 +23,7 @@ type Props = {
 // mobile bottom sheet.
 export function EditorPanel({
   ws,
+  points,
   highlight,
   onHighlight,
   layers,
@@ -36,6 +40,7 @@ export function EditorPanel({
       <Separator />
       <PresetGrid ws={ws} />
       <CompositionCard ws={ws} />
+      <PointsCard points={points} />
       <Separator />
       <SceneLayers layers={layers} />
     </div>

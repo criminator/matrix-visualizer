@@ -7,43 +7,49 @@
 @custom-variant data-horizontal (&[data-orientation='horizontal']);
 @custom-variant data-vertical (&[data-orientation='vertical']);
 
-/* The app is dark-only; tokens keep the original Matrix Space palette. */
+/* The app is dark-only: graphite neutrals with one indigo accent. The axis
+   colors are data colors and are kept out of the chrome. */
 :root {
-  --radius: 0.625rem;
-  --background: #101719;
-  --foreground: #e9eef0;
-  --card: #172024;
-  --card-foreground: #e9eef0;
-  --popover: #1b262a;
-  --popover-foreground: #e9eef0;
-  --primary: #bafb73;
-  --primary-foreground: #203022;
-  --secondary: #243236;
-  --secondary-foreground: #e9eef0;
-  --muted: #243236;
-  --muted-foreground: #a3b3b6;
-  --accent: #2b3b3f;
-  --accent-foreground: #f2f6f5;
-  --destructive: #f6aa97;
-  --border: #34474b;
-  --input: #3a4c50;
-  --ring: #bafb73;
-  --sidebar: #172024;
-  --axis-x: #fa9a80;
-  --axis-y: #bafb73;
-  --axis-z: #83b6fc;
+  --radius: 0.5rem;
+  --background: #0b0c0e;
+  --foreground: #e6e7ea;
+  --card: #131417;
+  --card-foreground: #e6e7ea;
+  --popover: #18191c;
+  --popover-foreground: #e6e7ea;
+  --primary: #7c86ff;
+  --primary-foreground: #0b0c0e;
+  --secondary: #1d1f23;
+  --secondary-foreground: #e6e7ea;
+  --muted: #1d1f23;
+  --muted-foreground: #8b8f98;
+  --accent: #23252a;
+  --accent-foreground: #f2f3f5;
+  --destructive: #f2706a;
+  --border: #24262b;
+  --input: #2c2f35;
+  --ring: #7c86ff;
+  --sidebar: #131417;
+  --axis-x: #c56a5f;
+  --axis-y: #6a9e5c;
+  --axis-z: #5a86c4;
   --scene: radial-gradient(
     ellipse at 54% 40%,
-    #203236 0%,
-    #111b1f 55%,
-    #10181b 100%
+    #17181c 0%,
+    #0f1012 60%,
+    #0b0c0e 100%
   );
 }
 
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, 'Segoe UI', Roboto, Arial, sans-serif;
-  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, 'Segoe UI', Arial,
+    sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, Consolas, monospace;
   --font-math: Georgia, 'Times New Roman', serif;
+  /* Field labels, section summaries and stat captions. */
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1rem;
+  --text-label--font-weight: 500;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -85,6 +91,10 @@
   body {
     @apply bg-background font-sans text-foreground antialiased;
     color-scheme: dark;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  .font-mono {
+    font-variant-numeric: tabular-nums;
   }
   [hidden] {
     display: none !important;

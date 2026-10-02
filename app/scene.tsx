@@ -9,6 +9,9 @@ import {
 } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import {
   columnSpace,
   eigen,
@@ -32,7 +35,8 @@ export type SceneProps = {
   plots: Plot[];
   // Static markers; matrices don't transform them.
   points: ScenePoint[];
-  activeId: string;
+  // Null when nothing is selected: every matrix gets full emphasis.
+  activeId: string | null;
   progress: number;
   grid: boolean;
   original: boolean;
@@ -47,7 +51,39 @@ export type SceneProps = {
   // Called with null when the user orbits away from a named view.
   onViewChange?: (view: CameraView | null) => void;
 };
-const colors = [0xfa9a80, 0xbafb73, 0x83b6fc];
+// Muted axis colors so the axes stay behind the data.
+const colors = [0xc56a5f, 0x6a9e5c, 0x5a86c4];
+// Labels use neutral text colors; the colored mark beside them carries identity.
+const LABEL = '#c9cbd1';
+const AXIS_LABEL = '#8b8f98';
+const UP = new THREE.Vector3(0, 1, 0);
+// Arrow along +y scaled to length, mirroring ArrowHelper's API: a
+// screen-space thick shaft and a smooth cone head.
+class Arrow extends THREE.Group {
+  constructor(
+    readonly shaft: LineSegments2,
+    readonly head: THREE.Mesh<THREE.ConeGeometry, THREE.MeshBasicMaterial>,
+  ) {
+    super();
+    this.add(shaft, head);
+  }
+  setDirection(direction: THREE.Vector3) {
+    this.quaternion.setFromUnitVectors(UP, direction.clone().normalize());
+  }
+  setLength(length: number, headLength: number, headWidth: number) {
+    this.shaft.scale.set(1, Math.max(1e-4, length - headLength), 1);
+    this.head.scale.set(headWidth, headLength, headWidth);
+    this.head.position.y = length;
+  }
+  setColor(color: THREE.ColorRepresentation) {
+    this.shaft.material.color.set(color);
+    this.head.material.color.set(color);
+  }
+  dispose() {
+    this.shaft.material.dispose();
+    this.head.material.dispose();
+  }
+}
 export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
   const host = useRef<HTMLDivElement>(null),
     latest = useRef(props),
@@ -139,24 +175,69 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       resources.push(resource);
       return resource;
     };
-    function line(points: THREE.Vector3[], color: number, opacity = 1) {
-      return new THREE.LineSegments(
-        keep(new THREE.BufferGeometry().setFromPoints(points)),
-        keep(
-          new THREE.LineBasicMaterial({ color, transparent: true, opacity }),
-        ),
-      );
+    // WebGL draws plain lines 1px wide, so shapes, axes and vectors use
+    // screen-space thick lines. Their materials need the canvas size.
+    const resolution = new THREE.Vector2(1, 1);
+    const lineMaterials = new Set<LineMaterial>();
+    function thickMaterial(
+      color: THREE.ColorRepresentation,
+      linewidth: number,
+      opacity = 1,
+      dash?: { dashSize: number; gapSize: number },
+    ) {
+      const material = new LineMaterial({
+        color: new THREE.Color(color),
+        linewidth,
+        opacity,
+        transparent: true,
+        // Thick lines are strips of triangles; a matrix with a negative
+        // determinant mirrors them so they face away and would be culled.
+        side: THREE.DoubleSide,
+        dashed: !!dash,
+        ...dash,
+      });
+      material.resolution.copy(resolution);
+      lineMaterials.add(material);
+      material.addEventListener('dispose', () => lineMaterials.delete(material));
+      return material;
     }
-    const gridPoints: THREE.Vector3[] = [];
-    for (let i = -10; i <= 10; i++) {
-      gridPoints.push(
-        new THREE.Vector3(i, -10, 0),
-        new THREE.Vector3(i, 10, 0),
-        new THREE.Vector3(-10, i, 0),
-        new THREE.Vector3(10, i, 0),
-      );
+    const segments = (points: THREE.Vector3[]) =>
+      new LineSegmentsGeometry().setPositions(points.flatMap((p) => p.toArray()));
+    // Ground grid that fades out with distance; every fifth line is stronger.
+    // Short segments let the per-vertex alpha fall off smoothly.
+    const GRID = 12;
+    const gridPositions: number[] = [];
+    const gridColors: number[] = [];
+    const gridColor = new THREE.Color(0x8b8f98);
+    for (let i = -GRID; i <= GRID; i++) {
+      const strength = i % 5 === 0 ? 0.28 : 0.13;
+      for (let s = -GRID; s < GRID; s += 0.5)
+        for (const [x0, y0, x1, y1] of [
+          [i, s, i, s + 0.5],
+          [s, i, s + 0.5, i],
+        ])
+          for (const [x, y] of [
+            [x0, y0],
+            [x1, y1],
+          ]) {
+            const fade = 1 - THREE.MathUtils.smoothstep(Math.hypot(x, y), 3, GRID);
+            gridPositions.push(x, y, 0);
+            gridColors.push(gridColor.r, gridColor.g, gridColor.b, strength * fade);
+          }
     }
-    const grid = line(gridPoints, 0x647c82, 0.18);
+    const gridGeometry = keep(new THREE.BufferGeometry());
+    gridGeometry.setAttribute('position', new THREE.Float32BufferAttribute(gridPositions, 3));
+    gridGeometry.setAttribute('color', new THREE.Float32BufferAttribute(gridColors, 4));
+    const grid = new THREE.LineSegments(
+      gridGeometry,
+      keep(
+        new THREE.LineBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          depthWrite: false,
+        }),
+      ),
+    );
     scene.add(grid);
     const labelFont = getComputedStyle(document.body).fontFamily;
     // Screen-space labels: fixed on-screen size at any zoom level. The canvas
@@ -167,7 +248,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       owned = resources,
       align: 'center' | 'left' = 'center',
     ) {
-      const font = `600 64px ${labelFont}`;
+      const font = `400 64px ${labelFont}`;
       const canvas = document.createElement('canvas');
       const measure = canvas.getContext('2d')!;
       measure.font = font;
@@ -181,8 +262,8 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       ctx.font = font;
       ctx.textAlign = align;
       ctx.textBaseline = 'middle';
-      ctx.lineWidth = 10;
-      ctx.strokeStyle = '#101719';
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = 'rgba(11, 12, 14, 0.85)';
       ctx.strokeText(text, x, 64);
       ctx.fillStyle = color;
       ctx.fillText(text, x, 64);
@@ -196,21 +277,31 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       });
       owned.push(texture, material);
       const sprite = new THREE.Sprite(material);
-      sprite.scale.set((0.056 * canvas.width) / 256, 0.028, 1);
+      sprite.scale.set((0.048 * canvas.width) / 256, 0.024, 1);
       sprite.renderOrder = 10;
       return sprite;
     }
     const axes = new THREE.Group();
     scene.add(axes);
+    // Positive half solid, negative half faint, so direction reads at a glance.
     for (let i = 0; i < 3; i++) {
       const a = new THREE.Vector3(),
         b = new THREE.Vector3();
       a.setComponent(i, -5);
       b.setComponent(i, 5);
-      axes.add(line([a, b], colors[i], 0.45));
+      axes.add(
+        new LineSegments2(
+          keep(segments([new THREE.Vector3(), b])),
+          keep(thickMaterial(colors[i], 1.25, 0.6)),
+        ),
+        new LineSegments2(
+          keep(segments([a, new THREE.Vector3()])),
+          keep(thickMaterial(colors[i], 1, 0.2)),
+        ),
+      );
       const text = label(
         ['x', 'y', 'z'][i],
-        ['#fa9a80', '#bafb73', '#83b6fc'][i],
+        AXIS_LABEL,
       );
       text.position.copy(b).multiplyScalar(0.7);
       axes.add(text);
@@ -218,29 +309,42 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     const cubeGeometry = keep(new THREE.BoxGeometry(1, 1, 1));
     cubeGeometry.translate(0.5, 0.5, 0.5);
     const edges = keep(new THREE.EdgesGeometry(cubeGeometry));
-    const reference = new THREE.LineSegments(
-      edges,
-      keep(
-        new THREE.LineDashedMaterial({
-          color: 0x9bb0b3,
-          dashSize: 0.055,
-          gapSize: 0.045,
-          transparent: true,
-          opacity: 0.5,
-        }),
-      ),
+    const edgeGeometry = keep(new LineSegmentsGeometry().fromEdgesGeometry(edges));
+    const reference = new LineSegments2(
+      keep(new LineSegmentsGeometry().fromEdgesGeometry(edges)),
+      keep(thickMaterial(0x8b8f98, 1, 0.5, { dashSize: 0.06, gapSize: 0.05 })),
     );
     reference.computeLineDistances();
     scene.add(reference);
+    // Vector arrows: thick shaft plus a smooth cone.
+    const coneGeometry = keep(
+      new THREE.ConeGeometry(0.5, 1, 24, 1).translate(0, -0.5, 0),
+    );
+    const shaftGeometry = keep(segments([new THREE.Vector3(), UP]));
+    const arrow = (
+      direction: THREE.Vector3,
+      color: string,
+      headLength: number,
+      headWidth: number,
+      width = 2,
+    ) => {
+      const a = new Arrow(
+        new LineSegments2(shaftGeometry, thickMaterial(color, width)),
+        new THREE.Mesh(coneGeometry, new THREE.MeshBasicMaterial({ color })),
+      );
+      a.setDirection(direction);
+      a.setLength(1, headLength, headWidth);
+      return a;
+    };
     const origin = new THREE.Mesh(
       keep(new THREE.SphereGeometry(0.025, 12, 8)),
-      keep(new THREE.MeshBasicMaterial({ color: 0xdde9e4 })),
+      keep(new THREE.MeshBasicMaterial({ color: 0xe6e7ea })),
     );
     scene.add(origin);
     const spanRadius = 5;
     const spanPointGeometry = keep(new THREE.SphereGeometry(0.08, 16, 12));
     const spanLineGeometry = keep(
-      new THREE.BufferGeometry().setFromPoints([
+      segments([
         new THREE.Vector3(-spanRadius, 0, 0),
         new THREE.Vector3(spanRadius, 0, 0),
       ]),
@@ -273,7 +377,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     dotCtx.fillStyle = '#ffffff';
     dotCtx.fill();
     dotCtx.lineWidth = 6;
-    dotCtx.strokeStyle = '#101719';
+    dotCtx.strokeStyle = '#0b0c0e';
     dotCtx.stroke();
     const dotTexture = keep(new THREE.CanvasTexture(dot));
     const markers = new THREE.Group();
@@ -302,7 +406,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         marker.scale.set(0.016, 0.016, 1);
         marker.renderOrder = 9;
         marker.position.set(...point);
-        const text = label(name, color, markerResources, 'left');
+        const text = label(name, LABEL, markerResources, 'left');
         // Up and right of the dot at any zoom: start just past its radius.
         text.center.set(-0.0075 / text.scale.x, -0.15);
         text.position.set(...point);
@@ -320,7 +424,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
     let eigenKey = '';
     let eigenResources: { dispose: () => void }[] = [];
     let eigenProbes: {
-      arrow: THREE.ArrowHelper;
+      arrow: Arrow;
       direction: THREE.Vector3;
       value: number;
     }[] = [];
@@ -396,20 +500,13 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
               plot.color,
             ),
           );
-          const arrow = new THREE.ArrowHelper(
-            direction,
-            new THREE.Vector3(),
-            1,
-            plot.color,
-            0.12,
-            0.07,
-          );
-          eigenGroup.add(arrow);
-          eigenProbes.push({ arrow, direction, value });
+          const probe = arrow(direction, plot.color, 0.1, 0.055, 1.5);
+          eigenGroup.add(probe);
+          eigenProbes.push({ arrow: probe, direction, value });
           // Beyond where the probe ends at full progress, and clear of a
           // column vector's label there (a column is λv when e_j is an
           // eigenvector).
-          const tag = label(text, plot.color, eigenResources);
+          const tag = label(text, LABEL, eigenResources);
           tag.position
             .copy(direction)
             .multiplyScalar(
@@ -421,7 +518,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
             disc(basis[0], basis[1], EIGEN_DISC, plot.color, 0.05),
           );
           // On the rim, between the two (positive-leaning) basis vectors.
-          const tag = label(text, plot.color, eigenResources);
+          const tag = label(text, LABEL, eigenResources);
           tag.position
             .set(...basis[0])
             .add(new THREE.Vector3(...basis[1]))
@@ -435,7 +532,7 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         eigenGroup.add(disc(u, v, ROTATION_DISC, plot.color, 0));
         const tag = label(
           `λ = ${formatEigenvalue(complex.re)} ± ${formatEigenvalue(complex.im)}i`,
-          plot.color,
+          LABEL,
           eigenResources,
         );
         tag.position
@@ -477,19 +574,16 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       const fill = new THREE.MeshBasicMaterial({
         color: plot.color,
         transparent: true,
-        opacity: 0.075,
+        opacity: 0.06,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
-      const stroke = new THREE.LineBasicMaterial({
-        color: plot.color,
-        transparent: true,
-        opacity: 0.9,
-      });
+      // Cube edges and the rank-1 span line.
+      const stroke = thickMaterial(plot.color, 1.5);
       owned.push(fill, stroke);
       transformed.add(
         new THREE.Mesh(cubeGeometry, fill),
-        new THREE.LineSegments(edges, stroke),
+        new LineSegments2(edgeGeometry, stroke),
       );
       const span = new THREE.Group();
       span.matrixAutoUpdate = false;
@@ -525,27 +619,20 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
       );
       const spanShapes = [
         new THREE.Mesh(spanPointGeometry, pointMaterial),
-        new THREE.LineSegments(spanLineGeometry, stroke),
+        new LineSegments2(spanLineGeometry, stroke),
         plane,
         space,
       ];
       span.add(...spanShapes);
       const arrows = [0, 1, 2].map((i) => {
-        const arrow = new THREE.ArrowHelper(
-          new THREE.Vector3().setComponent(i, 1),
-          new THREE.Vector3(),
-          1,
-          plot.color,
-          0.12,
-          0.07,
-        );
-        root.add(arrow);
-        return arrow;
+        const a = arrow(new THREE.Vector3().setComponent(i, 1), plot.color, 0.11, 0.06);
+        root.add(a);
+        return a;
       });
       const labels = [0, 1, 2].map((i) => {
         const sprite = label(
           `${plot.name}${['₁', '₂', '₃'][i]}`,
-          plot.color,
+          LABEL,
           owned,
         );
         root.add(sprite);
@@ -653,12 +740,14 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
             });
           }
         }
-        const isActive = plot.id === p.activeId;
-        object.stroke.opacity = isActive ? 1 : 0.65;
+        const isActive = p.activeId === null || plot.id === p.activeId;
+        const isSelected = plot.id === p.activeId;
+        object.stroke.opacity = isActive ? 0.95 : 0.5;
+        object.stroke.linewidth = isActive ? 1.5 : 1;
         // Overlapping spans blend into grey, so only the active one is filled;
         // the rest are drawn as faint outlines.
-        object.spanFill.opacity = isActive ? 0.1 : 0;
-        object.spaceFill.opacity = isActive ? 0.025 : 0;
+        object.spanFill.opacity = isSelected ? 0.1 : 0;
+        object.spaceFill.opacity = isSelected ? 0.025 : 0;
         object.spanGridMaterial.opacity = isActive ? 0.35 : 0.12;
         object.arrows.forEach((a, i) => {
           const v = new THREE.Vector3(m[0][i], m[1][i], m[2][i]),
@@ -667,19 +756,19 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
           // rest would pile up near the origin at span scale.
           a.visible =
             (p.vectors || p.mode === 'vectors') &&
-            (p.mode !== 'span' || isActive) &&
+            (p.mode !== 'span' || isSelected) &&
             length > 1e-10;
           if (length > 1e-10) {
             a.setDirection(v.clone().normalize());
             a.setLength(
               length,
-              Math.min(length * 0.2, 0.13),
-              Math.min(length * 0.1, 0.075),
+              Math.min(length * 0.2, 0.11),
+              Math.min(length * 0.1, 0.06),
             );
           }
           a.setColor(
             plot.id === p.activeId && p.highlight !== null && p.highlight !== i
-              ? 0x526368
+              ? 0x4a4d55
               : plot.color,
           );
           object!.labels[i].visible = a.visible;
@@ -699,6 +788,8 @@ export default forwardRef<SceneHandle, SceneProps>(function Scene(props, ref) {
         height = el.clientHeight;
       if (!width || !height) return;
       renderer.setSize(width, height);
+      resolution.set(width, height);
+      lineMaterials.forEach((m) => m.resolution.copy(resolution));
       camera.aspect = width / height;
       camera.setViewOffset(
         width,

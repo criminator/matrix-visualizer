@@ -22,6 +22,8 @@ export type PointRow = {
   // Last valid coordinates; kept while a cell holds an invalid draft.
   point: Vector;
   error: string;
+  // Hidden points stay in the list but aren't plotted.
+  visible: boolean;
 };
 
 // Suggestions for "Add point", skipping any already plotted.
@@ -51,6 +53,7 @@ const makeRow = ({ point, name, color }: Required<PointSpec>): PointRow => ({
   cells: toCells(point),
   point,
   error: '',
+  visible: true,
 });
 
 // Rows for parsed specs; unnamed points get names not in `taken` or the specs.
@@ -77,15 +80,11 @@ const toSource = (rows: PointRow[]) =>
     })),
   );
 
-const INITIAL = [
-  makeRow({ point: DEFAULTS[0], name: 'P1', color: pointColor }),
-];
-
+// Points are always plotted, so the list starts empty.
 export function usePoints() {
-  const [rows, setRows] = useState<PointRow[]>(INITIAL);
-  const [source, setSource] = useState(() => toSource(INITIAL));
+  const [rows, setRows] = useState<PointRow[]>([]);
+  const [source, setSource] = useState('');
   const [textError, setTextError] = useState('');
-  const [show, setShow] = useState(false);
 
   // Row edits rewrite the text; text edits rebuild the rows.
   const commitRows = (next: PointRow[]) => {
@@ -137,7 +136,13 @@ export function usePoints() {
   const editText = (text: string) => {
     setSource(text);
     try {
-      setRows(toRows(parsePoints(text), new Set()));
+      // The text has no visibility, so hidden points stay hidden by name.
+      const hidden = new Set(rows.filter((r) => !r.visible).map((r) => r.name));
+      setRows(
+        toRows(parsePoints(text), new Set()).map((r) =>
+          hidden.has(r.name) ? { ...r, visible: false } : r,
+        ),
+      );
       setTextError('');
     } catch (e) {
       setTextError((e as Error).message);
@@ -182,13 +187,17 @@ export function usePoints() {
 
   const remove = (id: number) => commitRows(rows.filter((r) => r.id !== id));
 
+  const toggleVisible = (id: number) =>
+    setRows((list) =>
+      list.map((r) => (r.id === id ? { ...r, visible: !r.visible } : r)),
+    );
+
   return {
     rows,
     source,
     textError,
-    plotted: show ? rows : [],
-    show,
-    setShow,
+    plotted: rows.filter((r) => r.visible),
+    toggleVisible,
     editCell,
     editName,
     settleName,

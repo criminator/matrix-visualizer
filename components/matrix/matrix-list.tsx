@@ -1,26 +1,30 @@
 'use client';
-import { useState } from 'react';
-import { ChevronDown, Eye, EyeOff, Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Eye, EyeOff, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup } from '@/components/ui/button-group';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { IDENTITY } from '@/lib/matrix';
 import { presets } from '@/lib/presets';
 import { cn } from '@/lib/utils';
-import { nextDefault, type Workspace } from '@/hooks/use-matrix-workspace';
-import { IconButton, IconToggle } from './icon-button';
+import { nextDefault, type Entry, type Workspace } from '@/hooks/use-matrix-workspace';
+import { ColorPicker } from './color-picker';
+import { IconButton, IconToggle, WithTooltip } from './icon-button';
+import { SectionHeader } from './inspector-section';
+import { StatusLine } from './status-line';
 
 export function MatrixList({ ws }: { ws: Workspace }) {
   const { entries, active } = ws;
   const suggestion = nextDefault(entries);
+  const [renaming, setRenaming] = useState(false);
 
   const remove = (id: string) => {
     const removed = ws.removeMatrix(id);
@@ -39,172 +43,197 @@ export function MatrixList({ ws }: { ws: Workspace }) {
   };
 
   return (
-    <section aria-labelledby="matrices-heading" className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 id="matrices-heading" className="text-sm font-medium">
-          Matrices{' '}
-          <span className="ml-1 text-xs text-muted-foreground">
-            {entries.length}
-          </span>
-        </h2>
-        <ButtonGroup>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => ws.addMatrix(suggestion.matrix, suggestion.name)}
-          >
-            <Plus /> Add {suggestion.name.toLowerCase()}
-          </Button>
-          <DropdownMenu>
+    <section aria-labelledby="matrices-heading" className="flex flex-col gap-1">
+      <SectionHeader id="matrices-heading" title="Matrices" count={entries.length}>
+        <DropdownMenu>
+          <WithTooltip label="Add matrix">
             <DropdownMenuTrigger
               render={
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="icon-sm"
-                  aria-label="More ways to add a matrix"
+                  aria-label="Add matrix"
+                  className="text-muted-foreground"
                 />
               }
             >
-              <ChevronDown />
+              <Plus />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem
-                onClick={() => ws.addMatrix(active.matrix, active.preset)}
-              >
+          </WithTooltip>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem
+              onClick={() => ws.addMatrix(suggestion.matrix, suggestion.name)}
+            >
+              New {suggestion.name.toLowerCase()}
+            </DropdownMenuItem>
+            {active && (
+              <DropdownMenuItem onClick={() => ws.addMatrix(active.matrix, active.preset)}>
                 Duplicate {active.name}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => ws.addMatrix(IDENTITY, 'Identity')}>
-                Identity
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
+            )}
+            <DropdownMenuItem onClick={() => ws.addMatrix(IDENTITY, 'Identity')}>
+              Identity
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Presets</DropdownMenuLabel>
               {presets.map((p) => (
-                <DropdownMenuItem
-                  key={p.name}
-                  onClick={() => ws.addMatrix(p.matrix, p.name)}
-                >
+                <DropdownMenuItem key={p.name} onClick={() => ws.addMatrix(p.matrix, p.name)}>
                   {p.name}
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {p.hint}
-                  </span>
+                  <span className="ml-auto text-label text-muted-foreground">{p.hint}</span>
                 </DropdownMenuItem>
               ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </ButtonGroup>
-      </div>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SectionHeader>
 
-      <ul className="flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+      <ul className="-mx-2 flex max-h-56 flex-col gap-px overflow-y-auto">
         {entries.map((e) => {
-          const isActive = e.id === active.id;
+          const isActive = e.id === active?.id;
           return (
             <li
               key={e.id}
               className={cn(
-                'flex items-center rounded-lg border bg-card pr-1 transition-colors',
-                isActive ? 'border-primary/70 bg-primary/5' : 'hover:bg-muted/40',
+                'group relative flex h-9 items-center gap-1 rounded-md pr-1 pl-1.5 transition-colors',
+                isActive ? 'bg-accent' : 'hover:bg-muted/50',
               )}
             >
-              <button
-                type="button"
-                aria-pressed={isActive}
-                aria-label={`Edit matrix ${e.name}`}
-                onClick={() => ws.select(e.id)}
-                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/40"
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    'size-2.5 shrink-0 rounded-full',
-                    !e.visible && 'opacity-40',
-                  )}
-                  style={{ background: e.color }}
-                />
-                <span
-                  className={cn(
-                    'truncate text-sm font-semibold',
-                    !e.visible && 'text-muted-foreground line-through',
-                  )}
+              {isActive && (
+                <span aria-hidden className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />
+              )}
+              <ColorPicker
+                label={`Color for ${e.name}`}
+                value={e.color}
+                onChange={(color) => ws.setColor(color, e.id)}
+                className={cn(!e.visible && 'opacity-40')}
+              />
+              {isActive && renaming ? (
+                <NameField ws={ws} entry={e} onDone={() => setRenaming(false)} />
+              ) : (
+                <button
+                  type="button"
+                  aria-pressed={isActive}
+                  aria-label={`Select matrix ${e.name}`}
+                  title={
+                    isActive
+                      ? 'Click to deselect · double-click to rename'
+                      : 'Double-click to rename'
+                  }
+                  // Clicking the selected matrix deselects it, so all draw equally.
+                  onClick={() => ws.select(isActive ? null : e.id)}
+                  onDoubleClick={() => {
+                    ws.select(e.id);
+                    setRenaming(true);
+                  }}
+                  onKeyDown={(k) => {
+                    if (k.key === 'F2') {
+                      ws.select(e.id);
+                      setRenaming(true);
+                    }
+                  }}
+                  className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  {e.name}
-                </span>
-                <span
-                  className={cn(
-                    'truncate text-xs text-muted-foreground',
-                    e.error && 'text-destructive',
-                  )}
+                  <span
+                    className={cn(
+                      'truncate font-math text-[15px] italic',
+                      !e.visible && 'text-muted-foreground line-through',
+                    )}
+                  >
+                    {e.name}
+                  </span>
+                  <span
+                    className={cn(
+                      'truncate text-label font-normal text-muted-foreground',
+                      e.error && 'text-destructive',
+                    )}
+                  >
+                    {e.error ? 'Invalid draft' : e.preset}
+                  </span>
+                </button>
+              )}
+              <div
+                className={cn(
+                  'flex items-center text-muted-foreground transition-opacity',
+                  !isActive && e.visible &&
+                    'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
+                )}
+              >
+                <IconToggle
+                  label={e.visible ? `Hide ${e.name}` : `Show ${e.name}`}
+                  pressed={!e.visible}
+                  onPressedChange={() => ws.toggleVisible(e.id)}
+                  className="aria-pressed:bg-transparent"
                 >
-                  {e.error ? 'Invalid draft' : e.preset}
-                  {!e.visible && ' · hidden'}
-                </span>
-              </button>
-              <IconToggle
-                label={e.visible ? `Hide ${e.name}` : `Show ${e.name}`}
-                pressed={!e.visible}
-                onPressedChange={() => ws.toggleVisible(e.id)}
-                className="text-muted-foreground"
-              >
-                {e.visible ? <Eye /> : <EyeOff />}
-              </IconToggle>
-              <IconButton
-                label={`Remove ${e.name}`}
-                disabled={entries.length === 1}
-                onClick={() => remove(e.id)}
-                className="text-muted-foreground"
-              >
-                <X />
-              </IconButton>
+                  {e.visible ? <Eye /> : <EyeOff />}
+                </IconToggle>
+                <IconButton
+                  label={`Remove ${e.name}`}
+                  disabled={entries.length === 1}
+                  onClick={() => remove(e.id)}
+                >
+                  <X />
+                </IconButton>
+              </div>
             </li>
           );
         })}
       </ul>
-
-      <div className="flex items-start gap-3">
-        <NameField key={active.id + active.name} ws={ws} />
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          Color
-          <input
-            type="color"
-            aria-label={`Color for ${active.name}`}
-            value={active.color}
-            onChange={(e) => ws.setColor(e.target.value)}
-            className="h-8 w-9 cursor-pointer rounded-md border border-input bg-transparent p-0.5"
-          />
-        </label>
-      </div>
     </section>
   );
 }
 
-// Validates while typing; commits on Enter/blur only when valid, Esc reverts.
-function NameField({ ws }: { ws: Workspace }) {
-  const [draft, setDraft] = useState(ws.active.name);
+// Inline rename of the active matrix. Validates while typing; Enter or blur
+// commits when valid (otherwise reverts), Esc cancels.
+function NameField({
+  ws,
+  entry,
+  onDone,
+}: {
+  ws: Workspace;
+  entry: Entry;
+  onDone: () => void;
+}) {
+  const [draft, setDraft] = useState(entry.name);
+  const cancelled = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
   const error = ws.validateName(draft.trim());
-  const revert = () => setDraft(ws.active.name);
-  const commit = () => (error ? revert() : ws.rename(draft.trim()));
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <label htmlFor="matrix-name">Name</label>
-        <Input
-          id="matrix-name"
-          value={draft}
-          maxLength={12}
-          aria-invalid={!!error}
-          aria-describedby={error ? 'name-error' : undefined}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') revert();
-          }}
-          className="h-8 font-medium text-foreground"
-        />
-      </div>
+    <div className="relative flex min-w-0 flex-1 px-1">
+      <input
+        ref={input}
+        aria-label={`Rename ${entry.name}`}
+        aria-invalid={!!error}
+        aria-describedby={error ? 'name-error' : undefined}
+        value={draft}
+        maxLength={12}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (!error && !cancelled.current) ws.rename(draft.trim());
+          onDone();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            cancelled.current = true;
+            onDone();
+          }
+        }}
+        className="h-7 w-full min-w-0 rounded-md bg-background px-1.5 font-math text-[15px] italic outline-none ring-1 ring-ring aria-invalid:ring-destructive"
+      />
       {error && (
-        <p id="name-error" role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
+        <div
+          id="name-error"
+          className="absolute top-full right-1 left-1 z-10 mt-1 rounded-md border bg-popover p-2 shadow-md"
+        >
+          <StatusLine error={error} />
+        </div>
       )}
     </div>
   );

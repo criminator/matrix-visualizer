@@ -30,6 +30,7 @@ import {
   CameraToolbar,
   ModeToggle,
   VIEWS,
+  floatingPanel,
 } from '@/components/matrix/view-toolbar';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useMatrixWorkspace, type Plot } from '@/hooks/use-matrix-workspace';
@@ -74,9 +75,12 @@ export default function Home() {
   const [snap, setSnap] = useState<Snap>(SNAPS[0]);
   const [sheetHeight, setSheetHeight] = useState(150);
 
-  const det = determinant(active.matrix);
-  const dimension = rank(active.matrix);
-  const eigenInfo = eigen(active.matrix);
+  // Statistics for the selected matrix; null when nothing is selected.
+  const stats = active && {
+    det: determinant(active.matrix),
+    rank: rank(active.matrix),
+    eigen: eigen(active.matrix),
+  };
   const visiblePlots = ws.plots.filter((p) => p.visible);
   const layers = [
     { label: 'Reference grid', checked: grid, onChange: setGrid },
@@ -163,7 +167,7 @@ export default function Home() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       {!focus && (
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-card px-3 sm:px-4">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-2 sm:px-3">
           {!isMobile && (
             <IconButton
               label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
@@ -176,15 +180,13 @@ export default function Home() {
               {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
             </IconButton>
           )}
-          <span className="flex items-center gap-2.5 text-lg font-bold tracking-tight">
-            <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-              <Box className="size-5" />
+          <span className="flex items-center gap-2 pl-1 text-sm font-semibold tracking-tight">
+            <span className="grid size-6 place-items-center rounded-md bg-primary/15 text-primary">
+              <Box className="size-3.5" />
             </span>
-            <span>
-              matrix<span className="font-normal text-muted-foreground">space</span>
-            </span>
+            matrixspace
           </span>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-0.5 text-muted-foreground">
             {!isMobile && (
               <ShortcutsPopover open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
             )}
@@ -219,7 +221,7 @@ export default function Home() {
             ref={scene}
             plots={ws.plots}
             points={points.plotted}
-            activeId={active.id}
+            activeId={active?.id ?? null}
             progress={ws.progress}
             grid={grid}
             original={original}
@@ -231,9 +233,11 @@ export default function Home() {
             onViewChange={setView}
           />
           <p aria-live="polite" className="sr-only">
-            {`${active.name}: determinant ${Number(det.toFixed(3))}, rank ${dimension}, ${
-              mode === 'span' ? `spans ${SPAN_NAMES[dimension]}` : `${visiblePlots.length} visible`
-            }.`}
+            {active && stats
+              ? `${active.name}: determinant ${Number(stats.det.toFixed(3))}, rank ${stats.rank}, ${
+                  mode === 'span' ? `spans ${SPAN_NAMES[stats.rank]}` : `${visiblePlots.length} visible`
+                }.`
+              : `No matrix selected, ${visiblePlots.length} visible.`}
           </p>
 
           {focus ? (
@@ -248,7 +252,7 @@ export default function Home() {
                 {!isMobile && <CameraToolbar view={view} onView={showView} onFit={fit} />}
               </div>
               {(!isMobile || snap === SNAPS[0]) && (
-                <SceneTitle mode={mode} ws={ws} dimension={dimension} visible={visiblePlots} />
+                <SceneTitle mode={mode} ws={ws} visible={visiblePlots} />
               )}
               {isMobile && (
                 <div className="absolute top-16 right-3">
@@ -259,9 +263,7 @@ export default function Home() {
                 <StatsDock
                   ref={dockRef}
                   ws={ws}
-                  det={det}
-                  rank={dimension}
-                  eigen={eigenInfo}
+                  stats={stats}
                   mode={mode}
                   className="mx-auto mt-auto w-full max-w-4xl"
                 />
@@ -301,11 +303,9 @@ export default function Home() {
             >
               <StatsDock
                 ws={ws}
-                det={det}
-                rank={dimension}
-                eigen={eigenInfo}
+                stats={stats}
                 mode={mode}
-                className="rounded-none border-0 bg-transparent px-5 pt-1 pb-0 shadow-none backdrop-blur-none"
+                className="rounded-none border-0 bg-transparent px-4 pt-1 pb-3 shadow-none backdrop-blur-none"
               />
               {editor}
             </div>
@@ -319,42 +319,49 @@ export default function Home() {
 function SceneTitle({
   mode,
   ws,
-  dimension,
   visible,
 }: {
   mode: DisplayMode;
   ws: ReturnType<typeof useMatrixWorkspace>;
-  dimension: number;
   visible: Plot[];
 }) {
   const { active } = ws;
-  if (mode !== 'span') {
-    const count = visible.length;
+  const count = visible.length;
+  if (mode === 'span' && !active)
     return (
       <div className="pointer-events-none">
-        <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-          {mode === 'transform' ? 'Space transformed' : 'Column vectors'}
+        <h2 className="text-sm font-medium">Column spaces</h2>
+        <p className="text-label font-normal text-muted-foreground">
+          {count} visible {count === 1 ? 'span' : 'spans'} · select a matrix to fill its span
         </p>
-        <h2 className="mt-1 text-xl font-normal">
-          {count} visible {count === 1 ? 'matrix' : 'matrices'}
+      </div>
+    );
+  if (mode !== 'span' || !active) {
+    return (
+      <div className="pointer-events-none">
+        <h2 className="text-sm font-medium">
+          {mode === 'transform' ? 'Transformation' : 'Column vectors'}
         </h2>
+        <p className="text-label font-normal text-muted-foreground">
+          {count} visible {count === 1 ? 'matrix' : 'matrices'}
+        </p>
       </div>
     );
   }
+  const dimension = rank(active.matrix);
   // Group the active matrix with any visible matrices spanning the same space.
   const shared = visible.filter(
     (p) => p.id !== active.id && sameSpan(p.matrix, active.matrix),
   );
   return (
     <div className="pointer-events-none max-w-[70%]">
-      <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-        Column space
-      </p>
-      <h2 className="mt-1 text-xl font-normal">
-        {[active, ...shared].map((p) => `Span(${p.name})`).join(' = ')}
-        <span className="text-muted-foreground"> · {SPAN_NAMES[dimension]}</span>
+      <h2 className="text-sm font-medium">
+        <span className="font-math text-base italic">
+          {[active, ...shared].map((p) => `Span(${p.name})`).join(' = ')}
+        </span>
+        <span className="font-normal text-muted-foreground"> · {SPAN_NAMES[dimension]}</span>
       </h2>
-      <p className="mt-1 text-xs text-muted-foreground">
+      <p className="text-label font-normal text-muted-foreground">
         Dimension {dimension}
         {!active.visible && ` · ${active.name} is hidden`}
         {visible.length > 1 && ' · other spans shown as outlines'}
@@ -381,11 +388,17 @@ function FocusOverlay({
         variant="outline"
         size="sm"
         onClick={onExit}
-        className="pointer-events-auto self-end bg-card/80 backdrop-blur"
+        className={cn(floatingPanel, 'self-end')}
       >
         <Minimize2 /> Exit focus
       </Button>
-      <ul aria-label="Plotted matrices and points" className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+      <ul
+        aria-label="Plotted matrices and points"
+        className={cn(
+          floatingPanel,
+          'pointer-events-none flex flex-wrap gap-x-4 gap-y-1 self-start px-3 py-2 text-label font-normal text-muted-foreground',
+        )}
+      >
         {plots.map((p) => (
           <li key={p.id} className="flex items-center gap-1.5">
             <span aria-hidden className="size-2 rounded-full" style={{ background: p.color }} />

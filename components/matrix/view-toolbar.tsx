@@ -19,7 +19,9 @@ export const VIEWS: { value: CameraView; label: string; key: string; hint: strin
   { value: 'yz', label: 'YZ', key: '4', hint: 'Look along the x axis' },
 ];
 
-const panel = 'pointer-events-auto rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur';
+// Shared look for everything floating over the canvas.
+export const floatingPanel =
+  'pointer-events-auto rounded-lg border bg-popover/85 shadow-sm backdrop-blur-md';
 
 export function ModeToggle({
   mode,
@@ -34,14 +36,15 @@ export function ModeToggle({
       value={[mode]}
       onValueChange={(v) => v[0] && onModeChange(v[0] as DisplayMode)}
       spacing={1}
-      className={panel}
+      className={cn(floatingPanel, 'p-1')}
     >
       {MODES.map(({ value, label, icon: Icon, hint }) => (
         <WithTooltip key={value} label={hint} side="bottom">
           <ToggleGroupItem
             value={value}
             aria-label={label}
-            className="data-pressed:bg-accent data-pressed:text-foreground text-muted-foreground"
+            size="sm"
+            className="px-2.5 text-muted-foreground data-pressed:bg-accent data-pressed:text-foreground"
           >
             <Icon />
             {label}
@@ -64,7 +67,7 @@ export function CameraToolbar({
   vertical?: boolean;
 }) {
   return (
-    <div className={cn(panel, 'flex items-center gap-1', vertical && 'flex-col')}>
+    <div className={cn(floatingPanel, 'flex items-center gap-1 p-1', vertical && 'flex-col')}>
       <ToggleGroup
         aria-label="Camera view"
         value={view ? [view] : []}

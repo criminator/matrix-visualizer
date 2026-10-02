@@ -6,13 +6,15 @@ import { cn } from '@/lib/utils';
 import type { DisplayMode } from '@/app/scene';
 import { formatEigenvalue as format, type Eigen } from '@/lib/matrix';
 import type { Entry, Workspace } from '@/hooks/use-matrix-workspace';
-import { IconButton } from './icon-button';
+import { IconButton, WithTooltip } from './icon-button';
+import { floatingPanel } from './view-toolbar';
+
+// Null when no matrix is selected.
+type Stats = { det: number; rank: number; eigen: Eigen } | null;
 
 type Props = {
   ws: Workspace;
-  det: number;
-  rank: number;
-  eigen: Eigen;
+  stats: Stats;
   mode: DisplayMode;
   className?: string;
 };
@@ -49,21 +51,19 @@ function Stat({
   label,
   value,
   note,
-  title,
+  className,
 }: {
   label: string;
   value: string;
-  note: string;
-  title?: string;
+  note?: string;
+  className?: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col" title={title}>
-      <span className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-        {label}
-      </span>
+    <div className={cn('flex min-w-0 flex-col gap-0.5', className)}>
+      <span className="text-label text-muted-foreground">{label}</span>
       <span className="flex items-baseline gap-1.5 whitespace-nowrap">
-        <strong className="text-lg font-medium tabular-nums">{value}</strong>
-        <span className="truncate text-xs text-muted-foreground">{note}</span>
+        <strong className="truncate font-mono text-[13px] font-medium">{value}</strong>
+        {note && <span className="truncate text-label font-normal text-muted-foreground">{note}</span>}
       </span>
     </div>
   );
@@ -71,10 +71,10 @@ function Stat({
 
 function Swatch({ entry }: { entry: Entry }) {
   return (
-    <span className="flex items-center gap-2 text-sm font-semibold">
+    <span className="flex shrink-0 items-center gap-2">
       <span aria-hidden className="size-2.5 rounded-full" style={{ background: entry.color }} />
-      {entry.name}
-      {!entry.visible && <span className="text-xs font-normal text-muted-foreground">hidden</span>}
+      <span className="font-math text-base italic">{entry.name}</span>
+      {!entry.visible && <span className="text-label text-muted-foreground">hidden</span>}
     </span>
   );
 }
@@ -82,42 +82,76 @@ function Swatch({ entry }: { entry: Entry }) {
 function EigenStat({ eigen }: { eigen: Eigen }) {
   const { value, note, defective } = eigenSummary(eigen);
   return (
-    <Stat
-      label="eigenvalues"
-      value={value}
-      note={note}
-      title={
+    <WithTooltip
+      label={
         defective
-          ? 'Defective: too few eigenvectors to span space, so the matrix is not diagonalizable.'
-          : undefined
+          ? `${value} (${note}). Defective: too few eigenvectors to span space, so the matrix is not diagonalizable.`
+          : `${value} (${note})`
       }
-    />
+    >
+      <div className="min-w-0 max-w-64">
+        <Stat label="Eigenvalues" value={value} note={note} />
+      </div>
+    </WithTooltip>
   );
 }
 
+const divider = 'hidden h-8 w-px shrink-0 bg-border sm:block';
+
 // Statistics for the active matrix plus the transformation timeline.
 export const StatsDock = forwardRef<HTMLDivElement, Props>(function StatsDock(
-  { ws, det, rank, eigen, mode, className },
+  { ws, stats, mode, className },
   ref,
 ) {
   return (
     <div
       ref={ref}
       className={cn(
-        'pointer-events-auto flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border bg-card/90 px-4 py-3 shadow-lg backdrop-blur',
+        floatingPanel,
+        'flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl px-4 py-3',
         className,
       )}
     >
-      <Swatch entry={ws.active} />
-      <div className="flex flex-wrap gap-x-6 gap-y-2">
-        <Stat label="det" value={String(Number(det.toFixed(3)))} note={orientation(det)} />
-        <Stat label="rank" value={String(rank)} note="of 3" />
-        <Stat label="volume" value={`${Number(Math.abs(det).toFixed(3))}×`} note="scale" />
-        <EigenStat eigen={eigen} />
-      </div>
+      {ws.active && stats ? (
+        <>
+          <Swatch entry={ws.active} />
+          <span aria-hidden className={divider} />
+          <div className="flex min-w-0 flex-wrap gap-x-5 gap-y-2">
+            <Stat
+              label="Determinant"
+              value={String(Number(stats.det.toFixed(3)))}
+              note={orientation(stats.det)}
+            />
+            <Stat label="Rank" value={`${stats.rank}`} note="of 3" />
+            <Stat label="Volume" value={`${Number(Math.abs(stats.det).toFixed(3))}×`} />
+            <EigenStat eigen={stats.eigen} />
+          </div>
+        </>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden className="flex -space-x-0.5">
+              {ws.entries.slice(0, 5).map((e) => (
+                <span
+                  key={e.id}
+                  className="size-2.5 rounded-full ring-1 ring-popover"
+                  style={{ background: e.color }}
+                />
+              ))}
+            </span>
+            <span className="text-[13px] font-medium">
+              {ws.entries.length} {ws.entries.length === 1 ? 'matrix' : 'matrices'}
+            </span>
+          </span>
+          <span className="text-label font-normal text-muted-foreground">
+            Select one to see its determinant, rank and eigenvalues
+          </span>
+        </div>
+      )}
+      <span aria-hidden className={divider} />
       {mode === 'span' ? (
-        <p className="min-w-48 flex-1 text-xs text-muted-foreground">
-          {rank === 0
+        <p className="min-w-48 flex-1 text-label font-normal text-muted-foreground">
+          {stats?.rank === 0
             ? 'The zero matrix spans only the origin.'
             : 'Spans are infinite; the plot shows a finite window.'}
         </p>
@@ -126,7 +160,7 @@ export const StatsDock = forwardRef<HTMLDivElement, Props>(function StatsDock(
           <IconButton
             label={ws.playing ? 'Pause' : 'Animate from identity'}
             shortcut="Space"
-            variant="default"
+            variant="secondary"
             size="icon"
             className="rounded-full"
             onClick={ws.togglePlay}
@@ -142,10 +176,10 @@ export const StatsDock = forwardRef<HTMLDivElement, Props>(function StatsDock(
               value={[ws.progress]}
               onValueChange={(v) => ws.scrub(Array.isArray(v) ? v[0] : v)}
             />
-            <div className="flex justify-between text-[11px] text-muted-foreground">
+            <div className="flex justify-between text-label font-normal text-muted-foreground">
               <span>Identity</span>
-              <span className="tabular-nums">{Math.round(ws.progress * 100)}%</span>
-              <span>Matrices</span>
+              <span className="font-mono">{Math.round(ws.progress * 100)}%</span>
+              <span>Applied</span>
             </div>
           </div>
         </div>

@@ -1,6 +1,7 @@
 'use client';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { InspectorSection } from './inspector-section';
 
 export type Layer = {
   label: string;
@@ -9,23 +10,26 @@ export type Layer = {
 };
 
 export function SceneLayers({ layers }: { layers: Layer[] }) {
+  const on = layers.filter((l) => l.checked).length;
   return (
-    <section aria-labelledby="layers-heading" className="flex flex-col gap-1">
-      <h2 id="layers-heading" className="mb-1 text-sm font-medium">
-        Scene layers
-      </h2>
+    <InspectorSection
+      id="display"
+      title="Display"
+      summary={`${on} of ${layers.length} layers`}
+      className="gap-0"
+    >
       {layers.map(({ label, checked, onChange }) => (
         <label
           key={label}
           className={cn(
-            'flex cursor-pointer items-center justify-between py-1.5 text-sm text-muted-foreground',
+            'flex h-8 cursor-pointer items-center justify-between text-[13px] text-muted-foreground transition-colors',
             checked && 'text-foreground',
           )}
         >
           {label}
-          <Switch checked={checked} onCheckedChange={onChange} />
+          <Switch checked={checked} onCheckedChange={onChange} size="sm" />
         </label>
       ))}
-    </section>
+    </InspectorSection>
   );
 }

@@ -3,6 +3,8 @@ import type { Matrix } from '@/lib/matrix';
 import { presets } from '@/lib/presets';
 import { cn } from '@/lib/utils';
 import type { Workspace } from '@/hooks/use-matrix-workspace';
+import { WithTooltip } from './icon-button';
+import { InspectorSection } from './inspector-section';
 
 const CUBE = [0, 1].flatMap((x) =>
   [0, 1].flatMap((y) => [0, 1].map((z) => [x, y, z])),
@@ -36,7 +38,7 @@ function Thumbnail({ matrix }: { matrix: Matrix }) {
   return (
     <svg
       viewBox="-0.6 -1.95 2.85 2.2"
-      className="h-9 w-12 shrink-0"
+      className="h-8 w-11"
       aria-hidden
       fill="none"
       strokeLinecap="round"
@@ -48,34 +50,40 @@ function Thumbnail({ matrix }: { matrix: Matrix }) {
 }
 
 export function PresetGrid({ ws }: { ws: Workspace }) {
+  const { active } = ws;
+  const current = active && presets.find((p) => p.name === active.preset);
   return (
-    <section aria-labelledby="presets-heading" className="flex flex-col gap-3">
-      <h2 id="presets-heading" className="text-sm font-medium">
-        Try a transformation
-      </h2>
-      <div className="grid grid-cols-2 gap-2">
+    <InspectorSection
+      id="presets"
+      title="Presets"
+      summary={current?.name}
+      description={
+        active
+          ? `Replace ${active.name} with a common transformation.`
+          : 'Add a common transformation as a new matrix.'
+      }
+    >
+      <div className="grid grid-cols-4 gap-1.5">
         {presets.map((p) => {
-          const selected = ws.active.preset === p.name;
+          const selected = active?.preset === p.name;
           return (
-            <button
-              key={p.name}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => ws.apply(p.matrix, p.name)}
-              className={cn(
-                'flex items-center gap-2 rounded-lg border bg-card p-2 text-left text-muted-foreground transition-colors outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/40',
-                selected && 'border-primary/70 bg-primary/5 text-primary',
-              )}
-            >
-              <Thumbnail matrix={p.matrix} />
-              <span className="flex min-w-0 flex-col">
-                <span className="text-sm font-medium text-foreground">{p.name}</span>
-                <span className="text-xs leading-4">{p.hint}</span>
-              </span>
-            </button>
+            <WithTooltip key={p.name} label={p.hint}>
+              <button
+                type="button"
+                aria-pressed={selected}
+                onClick={() => ws.apply(p.matrix, p.name)}
+                className={cn(
+                  'flex flex-col items-center gap-1 rounded-md border border-transparent px-1 pt-1.5 pb-1 text-muted-foreground transition-colors outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                  selected && 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/10 hover:text-primary',
+                )}
+              >
+                <Thumbnail matrix={p.matrix} />
+                <span className="text-label text-foreground">{p.name}</span>
+              </button>
+            </WithTooltip>
           );
         })}
       </div>
-    </section>
+    </InspectorSection>
   );
 }

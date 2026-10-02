@@ -8,7 +8,7 @@ import {
   scalar,
   type Matrix,
 } from '@/lib/matrix';
-import { palette, presets } from '@/lib/presets';
+import { compositionColor, palette, presets } from '@/lib/presets';
 
 export type Entry = {
   id: string;
@@ -76,18 +76,24 @@ export function useMatrixWorkspace() {
   const [entries, setEntries] = useState<Entry[]>(() => [
     makeEntry('matrix-1', 'A', presets[0].matrix, palette[0], presets[0].name),
   ]);
-  const [activeId, setActiveId] = useState('matrix-1');
-  const active = entries.find((e) => e.id === activeId) ?? entries[0];
+  const [activeId, setActiveId] = useState<string | null>('matrix-1');
+  // Null when nothing is selected; every matrix is then drawn with equal weight.
+  const active = entries.find((e) => e.id === activeId) ?? null;
 
   const [progress, setProgress] = useState(1);
   const [playing, setPlaying] = useState(false);
   const [expression, setExpression] = useState('A * B');
   const [showComposition, setShowComposition] = useState(false);
 
-  const patch = (changes: Partial<Entry>, id = active.id) =>
+  const patch = (changes: Partial<Entry>, id = active?.id) =>
     setEntries((list) => list.map((e) => (e.id === id ? { ...e, ...changes } : e)));
 
+  // Replaces the selected matrix, or adds one when nothing is selected.
   const apply = (m: Matrix, preset = 'Custom') => {
+    if (!active) {
+      addMatrix(m, preset);
+      return;
+    }
     patch({
       matrix: m,
       cells: toCells(m),
@@ -100,6 +106,7 @@ export function useMatrixWorkspace() {
   };
 
   const editCell = (r: number, c: number, value: string) => {
+    if (!active) return;
     const cells = active.cells.map((row) => [...row]);
     cells[r][c] = value;
     try {
@@ -142,8 +149,7 @@ export function useMatrixWorkspace() {
     const index = entries.findIndex((e) => e.id === id);
     const removed = entries[index];
     setEntries((list) => list.filter((e) => e.id !== id));
-    if (active.id === id)
-      setActiveId(entries[index === 0 ? 1 : index - 1].id);
+    if (activeId === id) setActiveId(entries[index === 0 ? 1 : index - 1].id);
     return { entry: removed, index };
   };
 
@@ -167,13 +173,14 @@ export function useMatrixWorkspace() {
   const validateName = (name: string) => {
     if (!NAME_PATTERN.test(name))
       return 'Start with a letter; use letters, numbers or _ (max 12).';
-    if (entries.some((e) => e.id !== active.id && e.name === name))
+    if (entries.some((e) => e.id !== activeId && e.name === name))
       return `${name} is already used.`;
     return '';
   };
 
   // Renames the active matrix and rewrites references in the composition.
   const rename = (name: string) => {
+    if (!active) return;
     const old = active.name;
     if (name === old || validateName(name)) return;
     patch({ name });
@@ -210,7 +217,7 @@ export function useMatrixWorkspace() {
           {
             id: 'composition',
             name: expression.replace(/\s/g, ''),
-            color: '#ffffff',
+            color: compositionColor,
             matrix: composition,
             visible: true,
           },
@@ -264,7 +271,7 @@ export function useMatrixWorkspace() {
     removeMatrix,
     restoreMatrix,
     toggleVisible,
-    setColor: (color: string) => patch({ color }),
+    setColor: (color: string, id?: string) => patch({ color }, id),
     validateName,
     rename,
     expression,

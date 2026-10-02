@@ -1,5 +1,4 @@
 'use client';
-import { Separator } from '@/components/ui/separator';
 import type { Workspace } from '@/hooks/use-matrix-workspace';
 import type { Points } from '@/hooks/use-points';
 import { CompositionCard } from './composition-card';
@@ -20,7 +19,7 @@ type Props = {
 };
 
 // Everything that edits matrices; shared by the desktop sidebar and the
-// mobile bottom sheet.
+// mobile bottom sheet. The list and editor stay open; the rest collapse.
 export function EditorPanel({
   ws,
   points,
@@ -33,16 +32,17 @@ export function EditorPanel({
     <MatrixEditor ws={ws} highlight={highlight} onHighlight={onHighlight} />
   );
   return (
-    <div className="flex flex-col gap-5 p-5">
-      {editorFirst && editor}
-      <MatrixList ws={ws} />
-      {!editorFirst && editor}
-      <Separator />
+    <div className="flex flex-col pb-4">
+      <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
+        {editorFirst && editor}
+        <MatrixList ws={ws} />
+        {!editorFirst && editor}
+      </div>
       <PresetGrid ws={ws} />
       <CompositionCard ws={ws} />
       <PointsCard points={points} />
-      <Separator />
       <SceneLayers layers={layers} />
+      <div className="border-t" />
     </div>
   );
 }

@@ -41,13 +41,11 @@ export const presets: Preset[] = [
   },
 ];
 
-export const palette = [
-  '#bafb73',
-  '#83b6fc',
-  '#fa9a80',
-  '#d6a4ff',
-  '#ffc75e',
-  '#70e0d5',
-];
-// Default for new points; outside the matrix palette and the composition's white.
-export const pointColor = '#ff7eb6';
+// Fixed order, validated against the dark scene surface: the first three
+// stay distinguishable in every pairing (including color-vision deficiency);
+// later slots rely on the matrix name labels as well.
+export const palette = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181'];
+// Default for new points; outside the matrix palette and the composition color.
+export const pointColor = '#9085e9';
+// Neutral color for the composition, distinct from every palette hue.
+export const compositionColor = '#d4d6db';

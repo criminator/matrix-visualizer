@@ -119,12 +119,12 @@ export const pointNameError = (name: string) =>
 // #rgb or #rrggbb, normalized to lowercase #rrggbb for color inputs.
 export function parseColor(token: string): string {
   const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(token);
-  if (!match) throw new Error(`Use a color like #ff7eb6, not ${token}.`);
+  if (!match) throw new Error(`Use a color like #9085e9, not ${token}.`);
   const hex = match[1].toLowerCase();
   return '#' + (hex.length === 3 ? hex.replace(/./g, '$&$&') : hex);
 }
 export type PointSpec = { point: Vector; name?: string; color?: string };
-// One point per row: P1: (1, 2, 3) #ff7eb6. A name before a colon or = and a
+// One point per row: P1: (1, 2, 3) #9085e9. A name before a colon or = and a
 // color after the coordinates are optional. [x y z] groups, semicolons or new
 // lines separate points; commas or whitespace separate coordinates.
 export function parsePoints(source: string): PointSpec[] {
